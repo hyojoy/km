@@ -12,17 +12,91 @@ options = Options()
 options.add_argument("--headless")
 options.add_argument("--disable-gpu")
 options.add_argument("--window-size=1200x800")
-options.add_argument("--no-sandbox") 
-options.add_argument("--disable-dev-shm-usage") 
+
 driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
 # 서비스 목록 및 키워드 RAW 데이터
 services = [
-    {"name": "블로그 트래픽", "id": "/gig/65843", "raw_input": """
-    유입수
-    970원
-    트래픽 기밀
-    1,680원
+    {"name": "기사형 백링크", "id": "/gig/167816", "raw_input": """
+
+마케팅
+5,000원
+
+
+seo
+3,720원
+
+
+트래픽
+5,070원
+
+
+최적화노출
+4,330원
+
+
+최적화
+2,440원
+
+
+백링크 트래픽
+910원
+
+
+대량 백링크
+1,940원
+
+
+국내포털백링크
+740원
+
+
+수작업 백링크
+2,420원
+
+
+백링크n
+2,900원
+
+
+백링크사이트
+3,550원
+
+
+사이트 백링크
+2,910원
+
+
+백링크 da
+3,310원
+
+
+백링크 직접
+3,220원
+
+
+백링크작업
+3,800원
+
+
+화이트햇 백링크
+2,420원
+
+
+seo백링크
+3,000원
+
+
+백링크 최적화
+2,120원
+
+
+구글 seo 백링크
+2,800원
+
+
+월관리백링크
+1,710원
     """},
     {"name": "웹사이트 트래픽", "id": "/gig/11111", "raw_input": """
     웹사이트트래픽
