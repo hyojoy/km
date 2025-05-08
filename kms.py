@@ -63,24 +63,27 @@ for idx in range(6):
 
             st.markdown("### 📊 결과 비교")
             for keyword, rank in results.items():
-                old_rank = prev_results.get(service_name, {}).get(keyword)
-                if old_rank == rank:
-                    diff = "(변동 없음)"
-                elif old_rank is None:
-                    diff = f"(신규 검색)"
-                elif rank == "없음":
-                    diff = f"(이전: {old_rank} → 없음)"
-                elif old_rank == "없음":
-                    diff = f"(이전: 없음 → {rank})"
+                if prev_results:
+                    old_rank = prev_results.get(service_name, {}).get(keyword)
+                    if old_rank == rank:
+                        diff = "(변동 없음)"
+                    elif old_rank is None:
+                        diff = f"(신규 검색)"
+                    elif rank == "없음":
+                        diff = f"(이전: {old_rank} → 없음)"
+                    elif old_rank == "없음":
+                        diff = f"(이전: 없음 → {rank})"
+                    else:
+                        try:
+                            diff_val = int(old_rank.replace("위", "")) - int(rank.replace("위", ""))
+                            arrow = "▲" if diff_val > 0 else "▼"
+                            diff = f"({arrow}{abs(diff_val)}위)"
+                        except:
+                            diff = f"(이전: {old_rank})"
+                    st.write(f"- {keyword}: {rank} {diff}")
                 else:
-                    # 순위 변동 계산
-                    try:
-                        diff_val = int(old_rank.replace("위", "")) - int(rank.replace("위", ""))
-                        arrow = "▲" if diff_val > 0 else "▼"
-                        diff = f"({arrow}{abs(diff_val)}위)"
-                    except:
-                        diff = f"(이전: {old_rank})"
-                st.write(f"- {keyword}: {rank} {diff}")
+                    st.write(f"- {keyword}: {rank}")
+
 
 driver.quit()
 
