@@ -15,20 +15,22 @@ RUN apt-get update && apt-get install -y \
     xdg-utils \
     fonts-liberation \
     wget \
-    unzip
+    unzip \
+    curl
 
 # ChromeDriver 136 설치
-RUN wget -q https://storage.googleapis.com/chrome-for-testing-public/136.0.7145.0/linux64/chromedriver-linux64.zip && \
-    unzip chromedriver-linux64.zip && \
-    mv chromedriver-linux64/chromedriver /usr/bin/chromedriver && \
+RUN curl -Lo /tmp/chromedriver.zip https://storage.googleapis.com/chrome-for-testing-public/136.0.7145.0/linux64/chromedriver-linux64.zip && \
+    unzip /tmp/chromedriver.zip -d /tmp/ && \
+    mv /tmp/chromedriver-linux64/chromedriver /usr/bin/chromedriver && \
     chmod +x /usr/bin/chromedriver && \
-    rm -rf chromedriver-linux64*
+    rm -rf /tmp/*
 
+# 환경변수
 ENV CHROME_BIN=/usr/bin/chromium
 ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
 ENV PATH=$PATH:/usr/bin/chromium:/usr/bin/chromedriver
 
-# Python 패키지 설치
+# 파이썬 패키지 설치
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
