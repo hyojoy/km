@@ -6,59 +6,23 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
-import subprocess # subprocess 모듈 추가
+import subprocess 
+from selenium.webdriver.support import expected_conditions as EC
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
 
-# Selenium 실행 설정
 def create_driver():
-    st.write("--- create_driver() 호출됨 ---") # 함수 호출 확인 로그
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-features=VizDisplayCompositor")
+    options.add_argument("--window-size=1920x1080")
+    options.add_argument("--remote-debugging-port=9222")  # 디버깅용
+    options.page_load_strategy = 'eager'  # 완전히 로드되지 않아도 넘어가게
+    return webdriver.Chrome(options=options)
 
-    # 런타임에서 Chrome 및 ChromeDriver 버전 확인
-    try:
-        chrome_version_proc = subprocess.run(
-            ["/usr/bin/google-chrome", "--version"],
-            capture_output=True, text=True, check=True
-        )
-        chrome_version_runtime = chrome_version_proc.stdout.strip()
-        st.write(f"Python 런타임 감지 Chrome 버전: {chrome_version_runtime}")
-    except Exception as e:
-        chrome_version_runtime = f"오류 발생: {e}"
-        st.write(f"Python 런타임 Chrome 버전 확인 중 오류: {e}")
-
-    try:
-        chromedriver_version_proc = subprocess.run(
-            ["/usr/bin/chromedriver", "--version"],
-            capture_output=True, text=True, check=True
-        )
-        chromedriver_version_runtime = chromedriver_version_proc.stdout.strip()
-        st.write(f"Python 런타임 감지 ChromeDriver 버전: {chromedriver_version_runtime}")
-    except Exception as e:
-        chromedriver_version_runtime = f"오류 발생: {e}"
-        st.write(f"Python 런타임 ChromeDriver 버전 확인 중 오류: {e}")
-
-    chrome_options = Options()
-    chrome_options.binary_location = "/usr/bin/google-chrome"
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--no-sandbox")
-    chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("--window-size=1200x800")
-    chrome_options.add_argument("--verbose") # Selenium/ChromeDriver 로깅 상세 수준 높임
-    chrome_options.add_argument("--log-path=/tmp/chromedriver.log") # ChromeDriver 로그 파일 경로
-
-    service_args = ['--verbose', '--log-path=/tmp/service.log'] # ChromeService 로그
-    service = ChromeService(executable_path="/usr/bin/chromedriver", service_args=service_args)
-    
-    st.write(f"Selenium 초기화 시도: Chrome='{chrome_options.binary_location}', ChromeDriver='{service.path}'")
-    st.write(f"감지된 Chrome 버전 (런타임): {chrome_version_runtime}")
-    st.write(f"감지된 ChromeDriver 버전 (런타임): {chromedriver_version_runtime}")
-
-
-    # 이 버전 정보가 오류 메시지의 내용과 일치하는지, 또는 예상과 다른지 확인
-    # 예: if "124" in chromedriver_version_runtime and "136" in chrome_version_runtime:
-    # st.error("런타임 버전 불일치 감지됨! ChromeDriver는 124, Chrome은 136입니다.")
-
-
-    return webdriver.Chrome(service=service, options=chrome_options)
 
 # 서비스 및 키워드 데이터 (기존과 동일)
 services = [
@@ -89,7 +53,15 @@ services = [
     # 다른 서비스 생략
 ]
 
-# 크롤링 수행
+def safe_get(driver, url, timeout=20):
+    try:
+        driver.get(url)
+        WebDriverWait(driver, timeout).until(
+            EC.presence_of_element_located((By.CSS_SELECTOR, "div.sc-gldTML"))
+        )
+    except Exception as e:
+        print(f"[!] URL 로드 실패: {url}\n오류: {e}")
+
 def run_search():
     driver = create_driver()
     final_results = {}
@@ -107,7 +79,7 @@ def run_search():
             encoded = urllib.parse.quote(keyword)
             url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
             st.write(f"크롤링 URL: {url}") # 현재 크롤링 중인 URL 로그
-            driver.get(url)
+            safe_get(driver, url)
             time.sleep(4) 
 
             articles = driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="gig-item"] a[href^="/gig/"]')
