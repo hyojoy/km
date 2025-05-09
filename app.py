@@ -16,7 +16,7 @@ os.environ["STREAMLIT_WATCHDOG_MODE"] = "none"
 
 def create_driver():
     options = Options()
-    options.add_argument("--headless=new")
+    options.add_argument("--headless=chrome")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
@@ -25,7 +25,10 @@ def create_driver():
     options.add_argument("--disable-features=VizDisplayCompositor")
     options.add_argument("--window-size=1920x1080")
     options.add_argument("--blink-settings=imagesEnabled=false")  # 이미지 로딩 꺼서 속도 향상
-    options.page_load_strategy = 'eager'
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-background-timer-throttling")
+    options.add_argument("--disable-backgrounding-occluded-windows")
+    options.add_argument("--disable-renderer-backgrounding")
     driver = webdriver.Chrome(options=options)
     driver.set_page_load_timeout(30)  # 전체 timeout 제한
     return driver
