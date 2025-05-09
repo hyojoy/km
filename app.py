@@ -10,6 +10,8 @@ import subprocess
 from selenium.webdriver.support import expected_conditions as EC
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+import os
+os.environ["STREAMLIT_WATCHDOG_MODE"] = "none"
 
 def create_driver():
     options = Options()
