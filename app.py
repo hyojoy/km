@@ -20,6 +20,8 @@ def create_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-gpu")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-software-rasterizer")
     options.add_argument("--disable-features=VizDisplayCompositor")
     options.add_argument("--window-size=1920x1080")
     options.add_argument("--blink-settings=imagesEnabled=false")  # 이미지 로딩 꺼서 속도 향상
