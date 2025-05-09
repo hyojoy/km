@@ -1,26 +1,63 @@
-# app.py 수정
-
 import re
 import time
 import urllib.parse
 import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service as ChromeService # Service 임포트 확인
+from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
+import subprocess # subprocess 모듈 추가
 
 # Selenium 실행 설정
 def create_driver():
+    st.write("--- create_driver() 호출됨 ---") # 함수 호출 확인 로그
+
+    # 런타임에서 Chrome 및 ChromeDriver 버전 확인
+    try:
+        chrome_version_proc = subprocess.run(
+            ["/usr/bin/google-chrome", "--version"],
+            capture_output=True, text=True, check=True
+        )
+        chrome_version_runtime = chrome_version_proc.stdout.strip()
+        st.write(f"Python 런타임 감지 Chrome 버전: {chrome_version_runtime}")
+    except Exception as e:
+        chrome_version_runtime = f"오류 발생: {e}"
+        st.write(f"Python 런타임 Chrome 버전 확인 중 오류: {e}")
+
+    try:
+        chromedriver_version_proc = subprocess.run(
+            ["/usr/bin/chromedriver", "--version"],
+            capture_output=True, text=True, check=True
+        )
+        chromedriver_version_runtime = chromedriver_version_proc.stdout.strip()
+        st.write(f"Python 런타임 감지 ChromeDriver 버전: {chromedriver_version_runtime}")
+    except Exception as e:
+        chromedriver_version_runtime = f"오류 발생: {e}"
+        st.write(f"Python 런타임 ChromeDriver 버전 확인 중 오류: {e}")
+
     chrome_options = Options()
-    chrome_options.binary_location = "/usr/bin/google-chrome" # Dockerfile에 설치된 google-chrome 경로
+    chrome_options.binary_location = "/usr/bin/google-chrome"
     chrome_options.add_argument("--headless")
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
-    chrome_options.add_argument("--disable-gpu") # 일부 환경에서 필요할 수 있음
+    chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--window-size=1200x800")
+    chrome_options.add_argument("--verbose") # Selenium/ChromeDriver 로깅 상세 수준 높임
+    chrome_options.add_argument("--log-path=/tmp/chromedriver.log") # ChromeDriver 로그 파일 경로
 
-    # Dockerfile에서 설치한 ChromeDriver 경로를 명시적으로 사용
-    service = ChromeService(executable_path="/usr/bin/chromedriver")
+    service_args = ['--verbose', '--log-path=/tmp/service.log'] # ChromeService 로그
+    service = ChromeService(executable_path="/usr/bin/chromedriver", service_args=service_args)
+    
+    st.write(f"Selenium 초기화 시도: Chrome='{chrome_options.binary_location}', ChromeDriver='{service.path}'")
+    st.write(f"감지된 Chrome 버전 (런타임): {chrome_version_runtime}")
+    st.write(f"감지된 ChromeDriver 버전 (런타임): {chromedriver_version_runtime}")
+
+
+    # 이 버전 정보가 오류 메시지의 내용과 일치하는지, 또는 예상과 다른지 확인
+    # 예: if "124" in chromedriver_version_runtime and "136" in chrome_version_runtime:
+    # st.error("런타임 버전 불일치 감지됨! ChromeDriver는 124, Chrome은 136입니다.")
+
+
     return webdriver.Chrome(service=service, options=chrome_options)
 
 # 서비스 및 키워드 데이터 (기존과 동일)
@@ -49,18 +86,18 @@ services = [
 실사용자 트래픽 2,390원
 """
     },
-    # 다른 서비스 생략 (같은 구조로 추가 가능)
+    # 다른 서비스 생략
 ]
 
 # 크롤링 수행
 def run_search():
-    driver = create_driver() # 수정된 create_driver() 함수 호출
+    driver = create_driver()
     final_results = {}
 
-    for service in services:
-        name = service["name"]
-        gig_id = service["id"]
-        raw = service["raw_input"]
+    for service_item in services: # 변수명 변경 service -> service_item (service 객체와 혼동 방지)
+        name = service_item["name"]
+        gig_id = service_item["id"]
+        raw = service_item["raw_input"]
 
         pairs = re.findall(r'(.+?)\s+[\d,]+원', raw.strip())
         keywords = [k.strip() for k in pairs]
@@ -69,22 +106,21 @@ def run_search():
         for keyword in keywords:
             encoded = urllib.parse.quote(keyword)
             url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
+            st.write(f"크롤링 URL: {url}") # 현재 크롤링 중인 URL 로그
             driver.get(url)
-            time.sleep(4) # 페이지 로딩 대기 시간, 필요에 따라 조절
+            time.sleep(4) 
 
-            # CSS 선택자 확인 (사이트 구조 변경 시 업데이트 필요)
             articles = driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="gig-item"] a[href^="/gig/"]')
-            if not articles: # 예: 다른 CSS 선택자 시도
+            if not articles:
                  articles = driver.find_elements(By.CSS_SELECTOR, 'article.css-790i1i a[href^="/gig/"]')
 
 
             found = False
-            # 검색 결과 상위 5개만 확인
             for i, article in enumerate(articles[:5]):
                 href = article.get_attribute('href')
                 if gig_id in href:
                     rank_text = f"{i+1}위"
-                    if i >= 4: # 5위 이상 (0-indexed이므로 4는 5위를 의미)
+                    if i >= 4: 
                         rank_text = f"🔴 {rank_text}"
                     final_results[name][keyword] = rank_text
                     found = True
@@ -96,17 +132,40 @@ def run_search():
     driver.quit()
     return final_results
 
-# Streamlit UI (기존과 동일)
+# Streamlit UI
 st.title("🔍 키워드 검색 결과 순위 확인기")
+
+if 'results' not in st.session_state:
+    st.session_state.results = None
 
 if st.button("🚀 시작하기"):
     with st.spinner("잠시만 기다려주세요..."):
-        results = run_search()
+        try:
+            st.session_state.results = run_search()
+        except Exception as e:
+            st.error(f"오류 발생: {e}")
+            # 상세한 트레이스백을 위해 st.exception(e) 사용 가능
+            st.exception(e) 
+            st.session_state.results = None # 오류 발생 시 결과 초기화
 
+if st.session_state.results:
     st.success("완료!")
-
-    for service_name, keywords_data in results.items(): # 변수명 변경 (results.items()의 키, 값을 명확히)
+    for service_name, keywords_data in st.session_state.results.items():
         st.markdown(f"### 🔹 서비스: {service_name}")
-        for keyword, rank in keywords_data.items(): # 변수명 변경
+        for keyword, rank in keywords_data.items():
             color = "red" if "🔴" in rank else "black"
             st.markdown(f"<span style='color:{color}'>• {keyword}: {rank}</span>", unsafe_allow_html=True)
+
+    디버깅 로그 파일 내용 보기 (선택 사항)
+    if st.checkbox("ChromeDriver 로그 보기 (/tmp/chromedriver.log)"):
+        try:
+            with open("/tmp/chromedriver.log", "r") as f:
+                st.text_area("ChromeDriver Log", f.read(), height=300)
+        except FileNotFoundError:
+            st.write("/tmp/chromedriver.log 파일을 찾을 수 없습니다.")
+    if st.checkbox("ChromeService 로그 보기 (/tmp/service.log)"):
+        try:
+            with open("/tmp/service.log", "r") as f:
+                st.text_area("ChromeService Log", f.read(), height=300)
+        except FileNotFoundError:
+            st.write("/tmp/service.log 파일을 찾을 수 없습니다.")
