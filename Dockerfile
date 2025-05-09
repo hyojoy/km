@@ -46,6 +46,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # 앱 복사
 COPY app.py .
+export STREAMLIT_WATCHDOG_MODE=none
 
 # 앱 실행
 CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
