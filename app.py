@@ -7,6 +7,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
 import subprocess 
+from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -61,10 +62,13 @@ def safe_get(driver, url, timeout=20):
     try:
         driver.get(url)
         WebDriverWait(driver, timeout).until(
-            EC.presence_of_element_located((By.CSS_SELECTOR, "div.sc-gldTML"))
+            EC.presence_of_element_located((By.CSS_SELECTOR, "article[data-testid='gig-item']"))
         )
+        return True
     except Exception as e:
         print(f"[!] URL 로드 실패: {url}\n오류: {e}")
+        return False
+
 
 def run_search():
     driver = create_driver()
