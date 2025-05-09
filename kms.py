@@ -18,8 +18,11 @@ def get_driver():
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")  # 필수
+    options.add_argument("--disable-dev-shm-usage")  # 필수
     options.add_argument("--window-size=1200x800")
     return webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
 
 driver = get_driver()
 
