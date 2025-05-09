@@ -1,38 +1,37 @@
 FROM python:3.10-slim
 
-# 기본 설치
+# 필요한 패키지 설치 (버전에 맞는 chromium-driver 포함)
 RUN apt-get update && apt-get install -y \
-    wget \
-    unzip \
-    curl \
-    gnupg \
-    fonts-liberation \
+    chromium \
+    chromium-driver \
+    libglib2.0-0 \
     libnss3 \
+    libgconf-2-4 \
+    libfontconfig1 \
     libxss1 \
+    libappindicator3-1 \
     libasound2 \
     libatk-bridge2.0-0 \
     libgtk-3-0 \
-    libdrm2 \
-    libgbm1 \
-    libu2f-udev \
     xdg-utils \
-    chromium \
-    chromium-driver
+    fonts-liberation \
+    wget \
+    unzip
 
-# 환경 변수 설정
 ENV CHROME_BIN=/usr/bin/chromium
-ENV PATH="$PATH:/usr/bin/chromium"
+ENV CHROMEDRIVER_PATH=/usr/bin/chromedriver
+ENV PATH=$PATH:/usr/bin/chromium:/usr/bin/chromedriver
 
-# 파이썬 패키지 설치
+# Python 패키지 설치
 COPY requirements.txt .
-RUN pip install --upgrade pip && pip install -r requirements.txt
+RUN pip install --no-cache-dir --upgrade pip && pip install -r requirements.txt
 
 # 앱 복사
 COPY . /app
 WORKDIR /app
 
-# Streamlit 포트
+# 포트 열기
 EXPOSE 8501
 
-# 실행 명령
+# Streamlit 실행
 CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.enableCORS=false"]
