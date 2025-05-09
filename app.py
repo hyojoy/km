@@ -147,7 +147,9 @@ seo 최적화
     options.add_argument("--window-size=1200x800")
     options.binary_location = "/usr/bin/chromium"
 
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+    driver = webdriver.Chrome(
+    executable_path="/usr/bin/chromedriver",
+    options=options)
 
     final_results = {}
 
