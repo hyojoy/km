@@ -10,10 +10,6 @@ from webdriver_manager.chrome import ChromeDriverManager
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 
-WebDriverWait(driver, 10).until(
-    EC.presence_of_element_located((By.CSS_SELECTOR, "article.css-790i1i"))
-)
-
 # Streamlit 페이지 설정
 st.set_page_config(page_title="크몽 키워드 순위 확인기", layout="wide")
 st.title("📈 크몽 키워드 검색 순위 확인기")
