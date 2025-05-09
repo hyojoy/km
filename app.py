@@ -156,7 +156,7 @@ if st.session_state.results:
             color = "red" if "🔴" in rank else "black"
             st.markdown(f"<span style='color:{color}'>• {keyword}: {rank}</span>", unsafe_allow_html=True)
 
-    디버깅 로그 파일 내용 보기 (선택 사항)
+    #디버깅 로그 파일 내용 보기 (선택 사항)
     if st.checkbox("ChromeDriver 로그 보기 (/tmp/chromedriver.log)"):
         try:
             with open("/tmp/chromedriver.log", "r") as f:
