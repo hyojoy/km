@@ -19,9 +19,11 @@ def create_driver():
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-features=VizDisplayCompositor")
     options.add_argument("--window-size=1920x1080")
-    options.add_argument("--remote-debugging-port=9222")  # 디버깅용
-    options.page_load_strategy = 'eager'  # 완전히 로드되지 않아도 넘어가게
-    return webdriver.Chrome(options=options)
+    options.add_argument("--blink-settings=imagesEnabled=false")  # 이미지 로딩 꺼서 속도 향상
+    options.page_load_strategy = 'eager'
+    driver = webdriver.Chrome(options=options)
+    driver.set_page_load_timeout(30)  # 전체 timeout 제한
+    return driver
 
 
 # 서비스 및 키워드 데이터 (기존과 동일)
