@@ -6,7 +6,6 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
-from webdriver_manager.chrome import ChromeDriverManager
 
 # 검색 실행 함수
 def run_search():
@@ -147,9 +146,13 @@ seo 최적화
     options.add_argument("--window-size=1200x800")
     options.binary_location = "/usr/bin/chromium"
 
+    from selenium.webdriver.chrome.service import Service
+    
     driver = webdriver.Chrome(
-    executable_path="/usr/bin/chromedriver",
-    options=options)
+        service=Service("/usr/bin/chromedriver"),
+        options=options
+    )
+
 
     final_results = {}
 
