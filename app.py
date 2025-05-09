@@ -4,37 +4,14 @@ import urllib.parse
 import streamlit as st
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.chrome.options import Options
-import subprocess 
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
 import os
+
 os.environ["STREAMLIT_WATCHDOG_MODE"] = "none"
 
-def create_driver():
-    options = Options()
-    options.add_argument("--headless=chrome")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-software-rasterizer")
-    options.add_argument("--disable-features=VizDisplayCompositor")
-    options.add_argument("--window-size=1920x1080")
-    options.add_argument("--blink-settings=imagesEnabled=false")  # 이미지 로딩 꺼서 속도 향상
-    options.add_argument("--disable-background-networking")
-    options.add_argument("--disable-background-timer-throttling")
-    options.add_argument("--disable-backgrounding-occluded-windows")
-    options.add_argument("--disable-renderer-backgrounding")
-    driver = webdriver.Chrome(options=options)
-    driver.set_page_load_timeout(30)  # 전체 timeout 제한
-    return driver
-
-
-# 서비스 및 키워드 데이터 (기존과 동일)
+# 서비스 및 키워드 데이터
 services = [
     {
         "name": "맞춤형 트래픽",
@@ -59,11 +36,31 @@ services = [
 트래픽 제작 1,220원
 실사용자 트래픽 2,390원
 """
-    },
-    # 다른 서비스 생략
+    }
 ]
 
-def safe_get(driver, url, timeout=20):
+# 키워드 추출
+def get_keywords(raw):
+    return [k.strip() for k in re.findall(r'(.+?)\s+[\d,]+원', raw.strip())]
+
+# 크롬 드라이버 생성
+def create_driver():
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-software-rasterizer")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--window-size=1920x1080")
+    options.add_argument("--blink-settings=imagesEnabled=false")
+    options.page_load_strategy = 'eager'
+    driver = webdriver.Chrome(options=options)
+    driver.set_page_load_timeout(30)
+    return driver
+
+# 페이지 로딩 대기
+def safe_get(driver, url, timeout=15):
     try:
         driver.get(url)
         WebDriverWait(driver, timeout).until(
@@ -71,86 +68,74 @@ def safe_get(driver, url, timeout=20):
         )
         return True
     except Exception as e:
-        print(f"[!] URL 로드 실패: {url}\n오류: {e}")
+        st.warning(f"❌ 페이지 로딩 실패: {url}")
         return False
 
+# 검색 결과에서 순위 찾기
+def find_gig_rank(driver, gig_id):
+    selectors = [
+        'article[data-testid="gig-item"] a[href^="/gig/"]',
+        'article.css-790i1i a[href^="/gig/"]'
+    ]
+    for selector in selectors:
+        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+        for i, el in enumerate(elements[:5]):
+            href = el.get_attribute("href")
+            if gig_id in href:
+                return f"🔴 {i+1}위" if i >= 4 else f"{i+1}위"
+    return "🔴 ❌ 없음"
 
+# 전체 크롤링 로직
 def run_search():
     driver = create_driver()
-    final_results = {}
+    results = {}
 
-    for service_item in services: # 변수명 변경 service -> service_item (service 객체와 혼동 방지)
-        name = service_item["name"]
-        gig_id = service_item["id"]
-        raw = service_item["raw_input"]
-
-        pairs = re.findall(r'(.+?)\s+[\d,]+원', raw.strip())
-        keywords = [k.strip() for k in pairs]
-        final_results[name] = {}
+    for service in services:
+        name, gig_id, raw = service["name"], service["id"], service["raw_input"]
+        keywords = get_keywords(raw)
+        results[name] = {}
 
         for keyword in keywords:
             encoded = urllib.parse.quote(keyword)
             url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
-            st.write(f"크롤링 URL: {url}") # 현재 크롤링 중인 URL 로그
-            safe_get(driver, url)
-            time.sleep(4) 
-
-            articles = driver.find_elements(By.CSS_SELECTOR, 'article[data-testid="gig-item"] a[href^="/gig/"]')
-            if not articles:
-                 articles = driver.find_elements(By.CSS_SELECTOR, 'article.css-790i1i a[href^="/gig/"]')
-
-
-            found = False
-            for i, article in enumerate(articles[:5]):
-                href = article.get_attribute('href')
-                if gig_id in href:
-                    rank_text = f"{i+1}위"
-                    if i >= 4: 
-                        rank_text = f"🔴 {rank_text}"
-                    final_results[name][keyword] = rank_text
-                    found = True
-                    break
-            
-            if not found:
-                final_results[name][keyword] = "🔴 ❌ 없음"
+            st.write(f"🔎 검색 중: {keyword}")
+            if safe_get(driver, url):
+                time.sleep(2)  # 부하 방지
+                results[name][keyword] = find_gig_rank(driver, gig_id)
+            else:
+                results[name][keyword] = "🔴 ❌ 로드 실패"
 
     driver.quit()
-    return final_results
+    return results
 
 # Streamlit UI
-st.title("🔍 키워드 검색 결과 순위 확인기")
+st.title("🔍 키워드 검색 순위 확인기")
 
 if 'results' not in st.session_state:
     st.session_state.results = None
 
 if st.button("🚀 시작하기"):
-    with st.spinner("잠시만 기다려주세요..."):
+    with st.spinner("검색 중입니다..."):
         try:
             st.session_state.results = run_search()
         except Exception as e:
-            st.error(f"오류 발생: {e}")
-            # 상세한 트레이스백을 위해 st.exception(e) 사용 가능
-            st.exception(e) 
-            st.session_state.results = None # 오류 발생 시 결과 초기화
+            st.error("❌ 오류 발생")
+            st.exception(e)
+            st.session_state.results = None
 
+# 결과 표시
 if st.session_state.results:
-    st.success("완료!")
-    for service_name, keywords_data in st.session_state.results.items():
-        st.markdown(f"### 🔹 서비스: {service_name}")
-        for keyword, rank in keywords_data.items():
+    st.success("✅ 완료!")
+    for service_name, keyword_data in st.session_state.results.items():
+        st.markdown(f"### 🔹 {service_name}")
+        for keyword, rank in keyword_data.items():
             color = "red" if "🔴" in rank else "black"
             st.markdown(f"<span style='color:{color}'>• {keyword}: {rank}</span>", unsafe_allow_html=True)
 
-    #디버깅 로그 파일 내용 보기 (선택 사항)
-    if st.checkbox("ChromeDriver 로그 보기 (/tmp/chromedriver.log)"):
-        try:
-            with open("/tmp/chromedriver.log", "r") as f:
-                st.text_area("ChromeDriver Log", f.read(), height=300)
-        except FileNotFoundError:
-            st.write("/tmp/chromedriver.log 파일을 찾을 수 없습니다.")
-    if st.checkbox("ChromeService 로그 보기 (/tmp/service.log)"):
-        try:
-            with open("/tmp/service.log", "r") as f:
-                st.text_area("ChromeService Log", f.read(), height=300)
-        except FileNotFoundError:
-            st.write("/tmp/service.log 파일을 찾을 수 없습니다.")
+# 디버깅 로그 보기
+if st.checkbox("Chrome 로그 (/tmp/chromedriver.log)"):
+    try:
+        with open("/tmp/chromedriver.log") as f:
+            st.text_area("로그 내용", f.read(), height=300)
+    except FileNotFoundError:
+        st.write("해당 로그 파일이 없습니다.")
