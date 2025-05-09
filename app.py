@@ -9,9 +9,10 @@ from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 import os
 
+# Render 환경 대응
 os.environ["STREAMLIT_WATCHDOG_MODE"] = "none"
 
-# 서비스 및 키워드 데이터
+# 키워드 입력
 services = [
     {
         "name": "맞춤형 트래픽",
@@ -39,12 +40,11 @@ services = [
     }
 ]
 
-# 키워드 추출
 def get_keywords(raw):
     return [k.strip() for k in re.findall(r'(.+?)\s+[\d,]+원', raw.strip())]
 
-# 크롬 드라이버 생성
-def create_driver():
+# 키워드 검색 1회 실행
+def search_keyword(keyword, gig_id):
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--no-sandbox")
@@ -52,64 +52,55 @@ def create_driver():
     options.add_argument("--disable-gpu")
     options.add_argument("--disable-software-rasterizer")
     options.add_argument("--disable-extensions")
-    options.add_argument("--window-size=1920x1080")
     options.add_argument("--blink-settings=imagesEnabled=false")
+    options.add_argument("--window-size=1920,1080")
     options.page_load_strategy = 'eager'
-    driver = webdriver.Chrome(options=options)
-    driver.set_page_load_timeout(30)
-    return driver
 
-# 페이지 로딩 대기
-def safe_get(driver, url, timeout=15):
+    driver = webdriver.Chrome(options=options)
+    driver.set_page_load_timeout(20)
+
     try:
+        encoded = urllib.parse.quote(keyword)
+        url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
         driver.get(url)
-        WebDriverWait(driver, timeout).until(
+        WebDriverWait(driver, 10).until(
             EC.presence_of_element_located((By.CSS_SELECTOR, "article[data-testid='gig-item']"))
         )
-        return True
-    except Exception as e:
-        st.warning(f"❌ 페이지 로딩 실패: {url}")
-        return False
 
-# 검색 결과에서 순위 찾기
-def find_gig_rank(driver, gig_id):
-    selectors = [
-        'article[data-testid="gig-item"] a[href^="/gig/"]',
-        'article.css-790i1i a[href^="/gig/"]'
-    ]
-    for selector in selectors:
-        elements = driver.find_elements(By.CSS_SELECTOR, selector)
-        for i, el in enumerate(elements[:5]):
-            href = el.get_attribute("href")
-            if gig_id in href:
-                return f"🔴 {i+1}위" if i >= 4 else f"{i+1}위"
-    return "🔴 ❌ 없음"
+        selectors = [
+            'article[data-testid="gig-item"] a[href^="/gig/"]',
+            'article.css-790i1i a[href^="/gig/"]'
+        ]
+        for selector in selectors:
+            elements = driver.find_elements(By.CSS_SELECTOR, selector)
+            for i, el in enumerate(elements[:5]):
+                href = el.get_attribute("href")
+                if gig_id in href:
+                    return f"🔴 {i+1}위" if i >= 4 else f"{i+1}위"
+        return "🔴 ❌ 없음"
+    except Exception:
+        return "🔴 ❌ 로드 실패"
+    finally:
+        driver.quit()
 
-# 전체 크롤링 로직
+# 전체 실행
 def run_search():
-    driver = create_driver()
     results = {}
-
     for service in services:
         name, gig_id, raw = service["name"], service["id"], service["raw_input"]
         keywords = get_keywords(raw)
         results[name] = {}
 
-        for keyword in keywords:
-            encoded = urllib.parse.quote(keyword)
-            url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
+        for keyword in keywords[:10]:  # 메모리 절약: 상위 10개만
             st.write(f"🔎 검색 중: {keyword}")
-            if safe_get(driver, url):
-                time.sleep(2)  # 부하 방지
-                results[name][keyword] = find_gig_rank(driver, gig_id)
-            else:
-                results[name][keyword] = "🔴 ❌ 로드 실패"
+            result = search_keyword(keyword, gig_id)
+            results[name][keyword] = result
+            time.sleep(1)  # 서버 부하 방지
 
-    driver.quit()
     return results
 
 # Streamlit UI
-st.title("🔍 키워드 검색 순위 확인기")
+st.title("🔍 크몽 키워드 검색 순위 확인기")
 
 if 'results' not in st.session_state:
     st.session_state.results = None
@@ -123,7 +114,7 @@ if st.button("🚀 시작하기"):
             st.exception(e)
             st.session_state.results = None
 
-# 결과 표시
+# 결과 출력
 if st.session_state.results:
     st.success("✅ 완료!")
     for service_name, keyword_data in st.session_state.results.items():
@@ -132,10 +123,10 @@ if st.session_state.results:
             color = "red" if "🔴" in rank else "black"
             st.markdown(f"<span style='color:{color}'>• {keyword}: {rank}</span>", unsafe_allow_html=True)
 
-# 디버깅 로그 보기
-if st.checkbox("Chrome 로그 (/tmp/chromedriver.log)"):
+# 디버깅 로그 (옵션)
+if st.checkbox("Chrome 로그 (/tmp/chromedriver.log) 보기"):
     try:
         with open("/tmp/chromedriver.log") as f:
             st.text_area("로그 내용", f.read(), height=300)
     except FileNotFoundError:
-        st.write("해당 로그 파일이 없습니다.")
+        st.write("로그 파일이 없습니다.")
