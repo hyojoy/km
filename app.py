@@ -212,87 +212,32 @@ def get_driver():
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-infobars")
-    options.add_argument("--mute-audio")
-    options.add_argument("--disable-browser-side-navigation")
-    options.add_argument("--disable-web-security")
-    options.add_argument("--blink-settings=imagesEnabled=false")  # Disable images
-    options.add_argument("--js-flags=--max_old_space_size=128")  # Limit memory usage
-    options.add_argument("--window-size=800x600")  # Smaller window size
+    options.add_argument("--window-size=1200x800")
     
     # Use pre-installed ChromeDriver from Dockerfile
     service = Service(executable_path="/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
     return driver
 
-# Function to analyze keyword ranking with retry mechanism
-def analyze_keyword(gig_id, keyword, max_retries=3):
-    retries = 0
-    while retries < max_retries:
-        driver = None
-        try:
-            # Create a new driver for each keyword to prevent memory issues
-            driver = get_driver()
-            
-            encoded = urllib.parse.quote(keyword)
-            url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
-            driver.get(url)
-            time.sleep(3)  # Allow page to load properly
-            
-            # Check if page loaded correctly
-            if "kmong" not in driver.current_url.lower():
-                raise WebDriverException("Page did not load correctly")
-            
-            articles = driver.find_elements(By.CSS_SELECTOR, 'article.css-790i1i a[href^="/gig/"]')
-            
-            # If no articles found, wait a bit longer and try again
-            if not articles:
-                time.sleep(2)
-                articles = driver.find_elements(By.CSS_SELECTOR, 'article.css-790i1i a[href^="/gig/"]')
-            
-            for i, article in enumerate(articles):
-                href = article.get_attribute('href')
-                if gig_id in href:
-                    driver.quit()
-                    if i < 5:
-                        return f"- ✅ **{keyword}**: {i+1}위", "success"
-                    else:
-                        return f"- ⚠️ **{keyword}**: {i+1}위 (5위 밖)", "warning"
-            
-            driver.quit()
-            return f"- ❌ **{keyword}**: 검색결과 없음", "error"
-            
-        except Exception as e:
-            retries += 1
-            if driver:
-                try:
-                    driver.quit()
-                except:
-                    pass
-            
-            if retries >= max_retries:
-                return f"- ❌ **{keyword}**: {max_retries}회 시도 후 실패", "error"
-            
-            # Wait before retrying
-            time.sleep(2)
-
-# Split keywords into smaller batches to reduce memory usage
-def chunk_keywords(keywords, size=3):
-    """Split keywords into smaller chunks to process in batches"""
-    for i in range(0, len(keywords), size):
-        yield keywords[i:i + size]
-
 # Start analysis when user clicks the button
 if st.button("키워드 순위 분석 시작"):
     try:
-        for service in services:
+        # Initialize driver once before starting
+        driver = get_driver()
+        
+        # Dictionary to store results
+        results_by_service = {}
+        
+        # Process all services
+        for service_idx, service in enumerate(services):
             name = service["name"]
             gig_id = service["id"]
             raw_input = service["raw_input"]
+            
+            # Extract keywords using the same regex pattern from the original code
             keywords = re.findall(r'(.+?)\n[\d,]+원', raw_input.strip())
             keywords = [kw.strip() for kw in keywords]
-
+            
             st.subheader(f"📦 서비스: {name}")
             
             # Create a progress bar
@@ -301,58 +246,91 @@ if st.button("키워드 순위 분석 시작"):
             # Create a placeholder for results
             results_placeholder = st.empty()
             results = []
+            results_by_service[name] = {}
             
-            # Process keywords in smaller batches
-            total_keywords = len(keywords)
-            processed = 0
-            
-            for batch in chunk_keywords(keywords):  # Process in batches of 3
-                batch_results = []
-                
-                for keyword in batch:
-                    with st.spinner(f"검색 중: {keyword} ({processed+1}/{total_keywords})"):
-                        st.write(f"키워드 분석 중: {keyword}")
+            # Process keywords
+            for idx, keyword in enumerate(keywords):
+                try:
+                    with st.spinner(f"검색 중: {keyword}"):
+                        encoded = urllib.parse.quote(keyword)
+                        url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
                         
-                        result, status = analyze_keyword(gig_id, keyword)
+                        # Try to navigate to the URL
+                        driver.get(url)
+                        time.sleep(5)  # Wait for page to load, same as original code
                         
-                        if status == "success":
-                            batch_results.append(result)
-                        elif status == "warning":
-                            batch_results.append(f"<span style='color:orange'>{result}</span>")
-                        else:
-                            batch_results.append(f"<span style='color:red'>{result}</span>")
+                        # Use the same CSS selector as in the original code
+                        articles = driver.find_elements(By.CSS_SELECTOR, 'article.css-790i1i a[href^="/gig/"]')
                         
-                        processed += 1
+                        found = False
+                        for i, article in enumerate(articles[:5]):  # Only check first 5 results
+                            href = article.get_attribute('href')
+                            if gig_id in href:
+                                rank = f"{i+1}위"
+                                results_by_service[name][keyword] = rank
+                                results.append(f"- ✅ **{keyword}**: {rank}")
+                                found = True
+                                break
+                                
+                        if not found:
+                            results_by_service[name][keyword] = "❌ 없음"
+                            results.append(f"- ❌ **{keyword}**: 검색결과 없음")
                         
-                        # Update progress
-                        progress = int(processed / total_keywords * 100)
-                        progress_bar.progress(progress)
+                        # Update progress bar
+                        progress_bar.progress((idx + 1) / len(keywords))
                         
-                        # Add small delay between keywords
-                        time.sleep(1)
-                
-                # Add batch results to overall results
-                results.extend(batch_results)
-                
-                # Update results display
-                results_placeholder.markdown("\n".join(results), unsafe_allow_html=True)
-                
-                # Clean up memory between batches
-                import gc
-                gc.collect()
-                
-                # Add a small delay between batches
-                time.sleep(3)
+                        # Update results display
+                        results_placeholder.markdown("\n".join(results), unsafe_allow_html=True)
+                        
+                except Exception as e:
+                    # If an error occurs with one keyword, log it and continue
+                    error_msg = f"- ❌ **{keyword}**: 오류 발생 ({str(e)[:100]}...)"
+                    results.append(error_msg)
+                    results_placeholder.markdown("\n".join(results), unsafe_allow_html=True)
+                    
+                    # If driver crashed, recreate it
+                    try:
+                        driver.title  # Test if driver is still responsive
+                    except:
+                        st.warning("브라우저가 응답하지 않아 재시작합니다...")
+                        try:
+                            driver.quit()
+                        except:
+                            pass
+                        driver = get_driver()
             
             # Clear progress bar after completion
             progress_bar.empty()
         
+        # Quit driver after all operations
+        try:
+            driver.quit()
+        except:
+            pass
+            
+        # Show summary at the end
+        st.markdown("---")
+        st.subheader("📊 검색 결과 순위 요약")
+        
+        for service_name, keywords in results_by_service.items():
+            st.markdown(f"**🔹 서비스: {service_name}**")
+            for keyword, rank in keywords.items():
+                st.markdown(f"  - {keyword}: {rank}")
+                
         st.success("✅ 모든 키워드 분석이 완료되었습니다!")
     
     except Exception as e:
         st.error(f"오류 발생: {str(e)}")
+        # Make sure to quit driver on error
+        try:
+            if 'driver' in locals():
+                driver.quit()
+        except:
+            pass
 else:
     st.info("👆 분석을 시작하려면 위 버튼을 클릭하세요.")
 
 st.markdown("---")
-st.markdown("#### 야옹이 ####")
+st.markdown("#### 참고사항")
+st.markdown("- 검색 결과는 실시간으로 변동될 수 있습니다.")
+st.markdown("- 한 번에 너무 많은 키워드를 분석할 경우 시간이 오래 걸릴 수 있습니다.")
