@@ -11,12 +11,17 @@ from webdriver_manager.chrome import ChromeDriverManager
 st.set_page_config(page_title="키워드 순위 확인기", layout="wide")
 st.title("🔍 키워드 순위 확인기")
 
-# 크롬 드라이버 설정
 options = Options()
 options.add_argument("--headless")
+options.add_argument("--no-sandbox")
+options.add_argument("--disable-dev-shm-usage")
 options.add_argument("--disable-gpu")
 options.add_argument("--window-size=1200x800")
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+
+# chromedriver 경로 직접 지정
+service = Service("/usr/bin/chromedriver")
+driver = webdriver.Chrome(service=service, options=options)
+
 
 # 서비스와 키워드 데이터
 services = [
