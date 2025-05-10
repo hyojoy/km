@@ -208,40 +208,59 @@ seo 최적화
     },
 ]
 
-# Railway 환경에 최적화된 웹드라이버 설정
 def get_driver():
     options = Options()
     options.add_argument("--headless")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--window-size=1280x1024")  # 해상도 증가
     
-    # 최적화 옵션
+    # 중요: 고유한 user-data-dir 설정으로 충돌 방지
+    import uuid
+    unique_dir = f"/tmp/chrome-data-{uuid.uuid4()}"
+    options.add_argument(f"--user-data-dir={unique_dir}")
+    
+    # 성능 최적화 옵션
+    options.add_argument("--window-size=1280x1024")
     options.add_argument("--ignore-certificate-errors")
     options.add_argument("--disable-extensions")
-    options.add_argument("--disable-infobars")
     options.add_argument("--disable-notifications")
-    options.add_argument("--disable-popup-blocking")
-    
-    # Railway 환경에서 메모리 사용 최적화
     options.add_argument("--js-flags=--max-old-space-size=96")
     options.add_argument("--single-process")
     
-    # 실제 브라우저처럼 동작하도록 User-Agent 설정
+    # 안정성 향상을 위한 User-Agent 설정
     options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
     
     # ChromeDriver 설정
     service = Service(executable_path="/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
     
-    # 페이지 로딩 타임아웃 설정
+    # 타임아웃 설정
     driver.set_page_load_timeout(30)
-    
-    # 페이지 스크립트 타임아웃 설정
     driver.set_script_timeout(30)
     
     return driver
+
+
+def quit_driver(driver):
+    """드라이버를 안전하게 종료하고 크롬 프로세스 정리"""
+    try:
+        driver.quit()
+    except:
+        pass
+    
+    # 남은 프로세스 정리
+    import os
+    try:
+        os.system("pkill -f chrome")
+        os.system("pkill -f chromedriver")
+    except:
+        pass
+    
+    # 메모리 정리
+    import gc
+    gc.collect()
+
 
 # 다양한 선택자와 방법으로 요소 찾기를 시도하는 함수
 def find_service_rank(driver, gig_id):
@@ -362,71 +381,41 @@ def search_keyword(driver, keyword, gig_id, max_retries=5):  # 재시도 횟수 
     
     return "❌ 최대 재시도 횟수 초과", False
 
-# 키워드 처리를 위한 메인 함수
+# 키워드 처리 함수 수정
 def process_keywords(driver, keywords, gig_id, results_placeholder, progress_bar, total_keywords):
     results = []
     keyword_results = {}
     
     for idx, keyword in enumerate(keywords):
+        # 2개 키워드마다 드라이버 재시작
+        if idx > 0 and idx % 2 == 0:
+            quit_driver(driver)
+            driver = get_driver()
+            time.sleep(2)
+        
         with st.spinner(f"검색 중: {keyword} ({idx+1}/{len(keywords)})"):
-            # 시작 전 잠깐 대기
-            time.sleep(1)
+            # 검색 실행
+            rank, success = search_keyword(driver, keyword, gig_id, max_retries=3)
             
-            # 짝수 번째 키워드는 특별 처리 (인덱스는 0부터 시작하므로 1이 짝수 번째임)
-            if idx % 2 == 1:
-                # 이전 키워드 처리 결과를 바탕으로 추가 대기 시간 조정
-                if idx > 0 and "❌" in results[-1]:  # 이전 결과가 실패했다면
-                    gc.collect()
-                    time.sleep(5)  # 더 긴 대기 시간
-                    
-                    # 드라이버 재시작 고려
-                    try:
-                        state = driver.execute_script("return document.readyState")
-                        if state != "complete":
-                            # 브라우저 재시작
-                            try:
-                                driver.quit()
-                            except:
-                                pass
-                            driver = get_driver()
-                            time.sleep(3)
-                    except:
-                        # 브라우저 반응 없으면 재시작
-                        try:
-                            driver.quit()
-                        except:
-                            pass
-                        driver = get_driver()
-                        time.sleep(3)
-            
-            # 검색 실행 (최대 5번 재시도)
-            rank, success = search_keyword(driver, keyword, gig_id, max_retries=5)
-            
-            # 결과 저장
+            # 결과 저장 및 표시
             keyword_results[keyword] = rank
             results.append(f"- {'✅' if '위' in rank else '❌'} **{keyword}**: {rank}")
             
-            # 드라이버 상태 확인
+            # 오류 발생 시 드라이버 재시작
             if not success:
-                try:
-                    driver.quit()
-                except:
-                    pass
+                quit_driver(driver)
                 driver = get_driver()
-                time.sleep(3)
+                time.sleep(2)
             
             # 진행 상황 업데이트
-            progress_percentage = (sum(len(k) for k in keywords[:idx+1])) / total_keywords
+            progress_percentage = (idx + 1) / len(keywords)
             progress_bar.progress(min(progress_percentage, 1.0))
-            
-            # 결과 표시 업데이트
             results_placeholder.markdown("\n".join(results), unsafe_allow_html=True)
             
-            # 처리 간격 조정
-            if idx < len(keywords) - 1:  # 마지막 키워드가 아니면
-                time.sleep(2)  # 키워드 간 기본 대기 시간
+            # 처리 간격
+            time.sleep(1)
     
-    return keyword_results, results
+    return keyword_results, results, driver
 
 # 메인 UI 및 실행 코드
 if st.button("키워드 순위 분석 시작"):
@@ -482,8 +471,7 @@ if st.button("키워드 순위 분석 시작"):
                     driver = get_driver()
                     time.sleep(3)  # 드라이버 초기화 후 대기
                 
-                # 배치 처리
-                batch_results, _ = process_keywords(
+                batch_results, _, driver = process_keywords(
                     driver, 
                     batch_keywords, 
                     gig_id, 
