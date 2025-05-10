@@ -210,46 +210,61 @@ seo 최적화
 def get_driver():
     """안정적인 크롬 드라이버 설정"""
     options = Options()
-    options.add_argument("--headless=new")  # 새로운 headless 모드
+    options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     
-    # 메모리 사용량 제한 옵션
-    options.add_argument("--disable-features=site-per-process")
+    # 메모리 사용량 최적화
     options.add_argument("--disable-extensions")
-    options.add_argument("--disable-component-extensions-with-background-pages")
-    options.add_argument("--disable-default-apps")
-    options.add_argument("--blink-settings=imagesEnabled=false")  # 이미지 로딩 비활성화
+    options.add_argument("--disable-features=site-per-process")
+    options.add_argument("--blink-settings=imagesEnabled=false")
     
-    # 고유한 프로필 디렉토리 설정 (핵심 해결책)
-    import uuid
+    # 고유한 프로필 생성 - 더 안정적인 방식으로 수정
+    import uuid, os
     unique_dir = f"/tmp/chrome-data-{uuid.uuid4()}"
+    if not os.path.exists(unique_dir):
+        os.makedirs(unique_dir)
     options.add_argument(f"--user-data-dir={unique_dir}")
     
-    # 메모리 최적화
-    options.add_argument("--window-size=800x600")
-    options.add_argument("--js-flags=--max-old-space-size=64")
-    options.add_argument("--renderer-process-limit=1")
-    options.add_argument("--single-process")
+    # 안정성 향상 옵션 추가
+    options.add_argument("--window-size=1280x720")  # 더 안정적인 크기
+    options.add_argument("--disable-background-networking")
+    options.add_argument("--disable-background-timer-throttling")
+    options.add_argument("--disable-client-side-phishing-detection")
+    options.add_argument("--disable-popup-blocking")
+    
+    # 시스템 리소스 최적화
+    options.add_argument("--js-flags=--max-old-space-size=128")  # 메모리 제한 증가
     
     # User-Agent
-    options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
+    options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/136.0.0.0 Safari/537.36")
     
     try:
         service = Service(executable_path="/usr/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=options)
-        driver.set_page_load_timeout(15)
-        driver.set_script_timeout(10)
+        driver.set_page_load_timeout(20)  # 타임아웃 증가
+        driver.set_script_timeout(15)     # 스크립트 타임아웃 증가
         return driver
     except Exception as e:
+        st.warning(f"드라이버 생성 실패: {str(e)[:100]}")
+        time.sleep(3)  # 더 긴 대기 시간
+        
+        # 기존 Chrome 프로세스 정리 후 재시도
+        import os
+        try:
+            os.system("pkill -f chrome")
+            os.system("pkill -f chromedriver")
+        except:
+            pass
+            
         time.sleep(2)
-        # 오류 발생 시 다시 시도
         service = Service(executable_path="/usr/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=options)
-        driver.set_page_load_timeout(15)
-        driver.set_script_timeout(10)
+        driver.set_page_load_timeout(20)
+        driver.set_script_timeout(15)
         return driver
+
 
 def is_driver_alive(driver):
     """드라이버가 살아있는지 확인"""
@@ -260,23 +275,27 @@ def is_driver_alive(driver):
         return False
 
 def quit_driver(driver):
-    """드라이버를 안전하게 종료"""
+    """드라이버를 안전하게 종료하고 리소스 정리"""
     try:
-        driver.quit()
-    except:
+        if driver and is_driver_alive(driver):
+            # 열린 페이지 정리 시도
+            driver.execute_script("window.open('about:blank', '_self').close();")
+            time.sleep(0.5)
+            driver.quit()
+    except Exception as e:
         pass
-    
-    # 남은 프로세스 정리
-    import os
-    try:
-        os.system("pkill -f chrome")
-        os.system("pkill -f chromedriver")
-    except:
-        pass
-    
-    # 메모리 정리
-    import gc
-    gc.collect()
+    finally:
+        # 남은 프로세스 정리
+        import os, gc
+        try:
+            # 특정 시점마다 크롬 프로세스 정리
+            os.system("pkill -f chrome")
+            os.system("pkill -f chromedriver")
+        except:
+            pass
+        
+        # 메모리 정리
+        gc.collect()
 
 # 다양한 선택자와 방법으로 요소 찾기를 시도하는 함수
 def find_service_rank(driver, gig_id):
@@ -324,8 +343,8 @@ def find_service_rank(driver, gig_id):
     
     return "❌ 없음", False
 
-def search_keyword(driver, keyword, gig_id, max_retries=2):
-    """키워드 검색 및 서비스 순위 확인"""
+def search_keyword(driver, keyword, gig_id, max_retries=3):
+    """키워드 검색 및 서비스 순위 확인 - 안정성 개선"""
     for attempt in range(max_retries):
         try:
             # 드라이버 상태 확인
@@ -340,15 +359,21 @@ def search_keyword(driver, keyword, gig_id, max_retries=2):
             # 검색 URL 생성 및 접속
             encoded = urllib.parse.quote(keyword)
             url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
+            
+            # 페이지 로드 시도
             driver.get(url)
             
-            # 간단한 대기 (복잡한 WebDriverWait 대신)
-            time.sleep(3)
+            # 페이지 로딩 대기 시간 증가
+            time.sleep(5)  # 더 긴 대기 시간
             
             # 서비스 순위 확인
             try:
+                # 스크롤 다운 추가 - 더 많은 결과 로드
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
+                time.sleep(1)
+                
                 rank, found = find_service_rank(driver, gig_id)
-            except:
+            except Exception as rank_error:
                 # 선택자로 찾지 못하면 페이지 소스에서 검색
                 if gig_id in driver.page_source:
                     rank = "페이지에 존재하나 위치 확인 불가"
@@ -359,9 +384,34 @@ def search_keyword(driver, keyword, gig_id, max_retries=2):
             
             return rank, found
             
+        except WebDriverException as wde:
+            # 세션 오류 처리
+            if "invalid session id" in str(wde) or "session deleted" in str(wde):
+                if attempt < max_retries - 1:
+                    # 드라이버 완전히 재시작
+                    quit_driver(driver)
+                    time.sleep(2)
+                    driver = get_driver()
+                    time.sleep(3)  # 추가 대기
+                else:
+                    return f"❌ 세션 오류: 브라우저 연결 끊김", False
+            else:
+                if attempt < max_retries - 1:
+                    quit_driver(driver)
+                    driver = get_driver()
+                    time.sleep(3)
+                else:
+                    return f"❌ 드라이버 오류: {str(wde)[:30]}...", False
+        except TimeoutException:
+            # 타임아웃 특별 처리
+            if attempt < max_retries - 1:
+                quit_driver(driver)
+                driver = get_driver()
+                time.sleep(2)
+            else:
+                return "❌ 페이지 로딩 시간 초과", False
         except Exception as e:
             if attempt < max_retries - 1:
-                # 실패 시 드라이버 재시작
                 quit_driver(driver)
                 driver = get_driver()
                 time.sleep(3)
@@ -369,6 +419,7 @@ def search_keyword(driver, keyword, gig_id, max_retries=2):
                 return f"❌ 오류: {str(e)[:30]}...", False
     
     return "❌ 최대 재시도 횟수 초과", False
+    
 # 키워드 처리 함수 수정
 def process_keywords(driver, keywords, gig_id, results_placeholder, progress_bar, total_keywords):
     results = []
@@ -405,7 +456,6 @@ def process_keywords(driver, keywords, gig_id, results_placeholder, progress_bar
     
     return keyword_results, results, driver
 
-# 메인 UI 및 실행 코드
 if st.button("키워드 순위 분석 시작"):
     try:
         # 서비스 및 키워드 데이터 준비
@@ -426,40 +476,60 @@ if st.button("키워드 순위 분석 시작"):
             results_placeholder = st.empty()
             results_by_service[name] = {}
             
-            # 키워드 한 개씩 처리 (배치 처리 대신)
+            # 키워드 처리
             for idx, keyword in enumerate(keywords):
-                # 매 키워드마다 새 드라이버 생성
-                driver = get_driver()
-                time.sleep(1)
-                
-                with st.spinner(f"검색 중: {keyword} ({idx+1}/{len(keywords)})"):
-                    # 검색 실행
-                    rank, success = search_keyword(driver, keyword, gig_id, max_retries=2)
+                # 새 드라이버 생성 - 더 안정적인 세션 관리
+                driver = None
+                try:
+                    driver = get_driver()
+                    time.sleep(2)  # 드라이버 초기화 후 대기시간 증가
                     
-                    # 결과 저장
-                    results_by_service[name][keyword] = rank
-                    
-                    # 진행 상황 업데이트
-                    progress_percentage = (idx + 1) / len(keywords)
-                    service_progress.progress(min(progress_percentage, 1.0))
-                    
-                    # 결과 표시
-                    current_results = []
-                    for k_idx, k in enumerate(keywords[:idx+1]):
-                        result = results_by_service[name].get(k, "대기 중...")
-                        current_results.append(f"- {'✅' if '위' in result else '❌'} **{k}**: {result}")
-                    
-                    results_placeholder.markdown("\n".join(current_results), unsafe_allow_html=True)
+                    with st.spinner(f"검색 중: {keyword} ({idx+1}/{len(keywords)})"):
+                        # 검색 실행
+                        rank, success = search_keyword(driver, keyword, gig_id, max_retries=3)
+                        
+                        # 결과 저장
+                        results_by_service[name][keyword] = rank
+                        
+                        # 진행 상황 업데이트
+                        progress_percentage = (idx + 1) / len(keywords)
+                        service_progress.progress(min(progress_percentage, 1.0))
+                        
+                        # 결과 표시
+                        current_results = []
+                        for k_idx, k in enumerate(keywords[:idx+1]):
+                            result = results_by_service[name].get(k, "대기 중...")
+                            current_results.append(f"- {'✅' if '위' in result else '❌'} **{k}**: {result}")
+                        
+                        results_placeholder.markdown("\n".join(current_results), unsafe_allow_html=True)
                 
-                # 드라이버 즉시 종료 (중요!)
-                quit_driver(driver)
+                except Exception as e:
+                    # 키워드 처리 중 오류 발생 시 기록하고 계속 진행
+                    error_msg = f"❌ 처리 오류: {str(e)[:50]}..."
+                    results_by_service[name][keyword] = error_msg
+                    st.warning(f"키워드 '{keyword}' 처리 중 오류: {error_msg}")
                 
-                # 전체 진행 상황 업데이트
-                processed_keywords += 1
-                total_progress.progress(min(processed_keywords / total_keywords, 1.0))
-                
-                # 처리 간격
-                time.sleep(2)
+                finally:
+                    # 반드시 드라이버 종료 및 리소스 정리
+                    if driver:
+                        quit_driver(driver)
+                    
+                    # 전체 진행 상황 업데이트
+                    processed_keywords += 1
+                    total_progress.progress(min(processed_keywords / total_keywords, 1.0))
+                    
+                    # 처리 간격 - 더 충분한 대기시간
+                    time.sleep(3)
+                    
+                    # 5개마다 시스템 프로세스 정리
+                    if idx % 5 == 4:
+                        import os
+                        try:
+                            os.system("pkill -f chrome")
+                            os.system("pkill -f chromedriver")
+                            time.sleep(1)
+                        except:
+                            pass
             
             # 서비스 진행 표시줄 완료
             service_progress.progress(1.0)
