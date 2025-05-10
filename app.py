@@ -6,19 +6,12 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-from webdriver_manager.chrome import ChromeDriverManager
 
+# Page configuration
 st.set_page_config(page_title="키워드 순위 확인기", layout="wide")
 st.title("🔍 키워드 순위 확인기")
 
-# 크롬 드라이버 설정
-options = Options()
-options.add_argument("--headless")
-options.add_argument("--disable-gpu")
-options.add_argument("--window-size=1200x800")
-driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-
-# 서비스와 키워드 데이터
+# Service and keyword data
 services = [
     {
         "name": "맞춤형 트래픽", "id": "/gig/65843", "raw_input": """
@@ -211,36 +204,104 @@ seo 최적화
     },
 ]
 
-# 순위 분석
-with st.spinner("🔍 검색 중..."):
-    for service in services:
-        name = service["name"]
-        gig_id = service["id"]
-        raw_input = service["raw_input"]
-        keywords = re.findall(r'(.+?)\n[\d,]+원', raw_input.strip())
-        keywords = [kw.strip() for kw in keywords]
+# Function to initialize the Chrome driver
+def get_driver():
+    options = Options()
+    options.add_argument("--headless")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--window-size=1200x800")
+    
+    # Use pre-installed ChromeDriver from Dockerfile
+    service = Service(executable_path="/usr/bin/chromedriver")
+    driver = webdriver.Chrome(service=service, options=options)
+    return driver
 
-        st.subheader(f"📦 서비스: {name}")
-        for keyword in keywords:
-            encoded = urllib.parse.quote(keyword)
-            url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
-            driver.get(url)
-            time.sleep(3)
+# Function to analyze keyword ranking
+def analyze_keyword(gig_id, keyword, driver):
+    try:
+        encoded = urllib.parse.quote(keyword)
+        url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
+        driver.get(url)
+        time.sleep(2)  # Reduced wait time
 
-            articles = driver.find_elements(By.CSS_SELECTOR, 'article.css-790i1i a[href^="/gig/"]')
+        articles = driver.find_elements(By.CSS_SELECTOR, 'article.css-790i1i a[href^="/gig/"]')
 
-            found = False
-            for i, article in enumerate(articles):
-                href = article.get_attribute('href')
-                if gig_id in href:
-                    found = True
-                    if i < 5:
-                        st.markdown(f"- ✅ **{keyword}**: {i+1}위")
+        for i, article in enumerate(articles):
+            href = article.get_attribute('href')
+            if gig_id in href:
+                if i < 5:
+                    return f"- ✅ **{keyword}**: {i+1}위", "success"
+                else:
+                    return f"- ⚠️ **{keyword}**: {i+1}위 (5위 밖)", "warning"
+        return f"- ❌ **{keyword}**: 검색결과 없음", "error"
+    except Exception as e:
+        return f"- ❌ **{keyword}**: 오류 발생 ({str(e)})", "error"
+
+# Start analysis when user clicks the button
+if st.button("키워드 순위 분석 시작"):
+    try:
+        # Initialize driver only when needed
+        driver = get_driver()
+        
+        for service in services:
+            name = service["name"]
+            gig_id = service["id"]
+            raw_input = service["raw_input"]
+            keywords = re.findall(r'(.+?)\n[\d,]+원', raw_input.strip())
+            keywords = [kw.strip() for kw in keywords]
+
+            st.subheader(f"📦 서비스: {name}")
+            
+            # Create a progress bar
+            progress_bar = st.progress(0)
+            
+            # Create a placeholder for results
+            results_placeholder = st.empty()
+            results = []
+            
+            # Process keywords with progress updates
+            for idx, keyword in enumerate(keywords):
+                with st.spinner(f"검색 중: {keyword}"):
+                    result, status = analyze_keyword(gig_id, keyword, driver)
+                    
+                    if status == "success":
+                        results.append(result)
+                    elif status == "warning":
+                        results.append(f"<span style='color:orange'>{result}</span>")
                     else:
-                        st.markdown(f"<span style='color:orange'>- ⚠️ <b>{keyword}</b>: {i+1}위 (5위 밖)</span>", unsafe_allow_html=True)
-                    break
-            if not found:
-                st.markdown(f"<span style='color:red'>- ❌ <b>{keyword}</b>: 검색결과 없음</span>", unsafe_allow_html=True)
+                        results.append(f"<span style='color:red'>{result}</span>")
+                    
+                    # Update progress
+                    progress = int((idx + 1) / len(keywords) * 100)
+                    progress_bar.progress(progress)
+                    
+                    # Update results display
+                    results_placeholder.markdown("\n".join(results), unsafe_allow_html=True)
+                    
+                    # Small delay to prevent overwhelming the server
+                    time.sleep(0.5)
+            
+            # Clear progress bar after completion
+            progress_bar.empty()
+        
+        # Quit driver after all operations
+        driver.quit()
+        st.success("✅ 모든 키워드 분석이 완료되었습니다!")
+    
+    except Exception as e:
+        st.error(f"오류 발생: {str(e)}")
+        # Make sure to quit driver on error
+        try:
+            if 'driver' in locals():
+                driver.quit()
+        except:
+            pass
+else:
+    st.info("👆 분석을 시작하려면 위 버튼을 클릭하세요.")
 
-# 종료
-driver.quit()
+st.markdown("---")
+st.markdown("#### 참고사항")
+st.markdown("- 검색 결과는 실시간으로 변동될 수 있습니다.")
+st.markdown("- 한 번에 너무 많은 키워드를 분석할 경우 시간이 오래 걸릴 수 있습니다.")
