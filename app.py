@@ -7,7 +7,9 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import WebDriverException
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import WebDriverException, TimeoutException
 
 # Page configuration
 st.set_page_config(page_title="키워드 순위 확인기", layout="wide")
@@ -215,33 +217,24 @@ def get_driver():
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1200x800")
     
-    # 메모리 사용 최적화 옵션 추가
+    # Railway 환경에 최적화
     options.add_argument("--disable-extensions")
     options.add_argument("--disable-infobars")
-    options.add_argument("--disable-browser-side-navigation")
-    options.add_argument("--disable-features=TranslateUI")
-    options.add_argument("--disable-features=site-per-process")
-    options.add_argument("--disable-breakpad")
-    options.add_argument("--disable-logging")
-    options.add_argument("--disable-default-apps")
-    options.add_argument("--incognito")
-    options.add_argument("--disable-dev-tools")
-    options.add_argument("--disable-browser-side-navigation")
-    
-    # Railway 환경에 최적화된 메모리 제한 설정
-    options.add_argument("--js-flags=--max-old-space-size=128")
+    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36")
     
     # Use pre-installed ChromeDriver from Dockerfile
     service = Service(executable_path="/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
+    
+    # 타임아웃 설정
+    driver.set_page_load_timeout(60)  # 충분한 페이지 로드 시간 제공
     return driver
 
-# 검색 함수를 별도로 분리하고 재시도 로직 추가
+# 검색 함수 개선 - 대기 시간에 초점
 def search_keyword(driver, keyword, gig_id, max_retries=3):
     for attempt in range(max_retries):
         try:
-            # 메모리 정리 먼저 실행
-            gc.collect()
+            gc.collect()  # 메모리 정리
             
             encoded = urllib.parse.quote(keyword)
             url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
@@ -249,15 +242,26 @@ def search_keyword(driver, keyword, gig_id, max_retries=3):
             # 페이지 로드
             driver.get(url)
             
-            # 짝수 번째 키워드는 대기 시간을 약간 늘림
-            wait_time = 7 if keyword == keyword.strip() and len(keyword) % 2 == 0 else 5
-            time.sleep(wait_time)
+            # 명시적 대기 추가 - 페이지 로딩 완료 확인
+            try:
+                # DOM이 완전히 로드될 때까지 대기
+                WebDriverWait(driver, 15).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, 'article.css-790i1i a[href^="/gig/"]'))
+                )
+            except TimeoutException:
+                # 명시적 대기 실패 시 추가 대기
+                time.sleep(15)  # Railway 환경에서는 더 긴 대기 시간이 필요할 수 있음
             
-            # 페이지 로드 완료 확인
+            # 해당 선택자로 요소 찾기
             articles = driver.find_elements(By.CSS_SELECTOR, 'article.css-790i1i a[href^="/gig/"]')
             
+            # 결과 없는 경우 추가 대기 후 재시도
+            if not articles:
+                time.sleep(10)
+                articles = driver.find_elements(By.CSS_SELECTOR, 'article.css-790i1i a[href^="/gig/"]')
+            
             # 결과 확인
-            for i, article in enumerate(articles[:5]):
+            for i, article in enumerate(articles[:10]):  # 검색 범위 확대
                 href = article.get_attribute('href')
                 if gig_id in href:
                     return f"{i+1}위", True
@@ -266,10 +270,9 @@ def search_keyword(driver, keyword, gig_id, max_retries=3):
             
         except Exception as e:
             if attempt < max_retries - 1:
-                # 짧은 대기 후 재시도
-                time.sleep(3)
+                # 대기 후 재시도
+                time.sleep(5)
                 try:
-                    # 브라우저 상태 확인 및 재설정
                     driver.execute_script("return document.readyState")
                 except:
                     # 브라우저 재시작
@@ -283,60 +286,59 @@ def search_keyword(driver, keyword, gig_id, max_retries=3):
     
     return "❌ 최대 재시도 횟수 초과", False
 
-# Start analysis when user clicks the button
+# 메인 코드 부분 수정
 if st.button("키워드 순위 분석 시작"):
     try:
-        # Initialize driver once before starting
+        # 초기 드라이버 설정
         driver = get_driver()
         
-        # Dictionary to store results
+        # 결과 저장용 딕셔너리
         results_by_service = {}
         
-        # Process all services
+        # 모든 서비스 처리
         for service_idx, service in enumerate(services):
             name = service["name"]
             gig_id = service["id"]
             raw_input = service["raw_input"]
             
-            # Extract keywords using the same regex pattern from the original code
+            # 키워드 추출
             keywords = re.findall(r'(.+?)\n[\d,]+원', raw_input.strip())
             keywords = [kw.strip() for kw in keywords]
             
             st.subheader(f"📦 서비스: {name}")
             
-            # Create a progress bar
+            # 진행 표시줄
             progress_bar = st.progress(0)
             
-            # Create a placeholder for results
+            # 결과 표시용 placeholder
             results_placeholder = st.empty()
             results = []
             results_by_service[name] = {}
             
-            # Process keywords with batch processing
-            batch_size = 5  # 한 번에 처리할 키워드 수
+            # 키워드 배치 처리
+            batch_size = 3  # 배치 크기 줄임
             for batch_start in range(0, len(keywords), batch_size):
                 batch_end = min(batch_start + batch_size, len(keywords))
                 batch_keywords = keywords[batch_start:batch_end]
                 
-                # 배치 처리 전 드라이버 재시작 (메모리 확보)
+                # 배치마다 드라이버 재시작
                 if batch_start > 0:
                     try:
                         driver.quit()
                     except:
                         pass
                     driver = get_driver()
-                    # 드라이버 초기화 후 짧은 대기
-                    time.sleep(2)
+                    time.sleep(3)  # 드라이버 초기화 후 대기
                 
-                # Process batch keywords
+                # 배치 키워드 처리
                 for idx, keyword in enumerate(batch_keywords):
                     global_idx = batch_start + idx
                     
                     with st.spinner(f"검색 중: {keyword} ({global_idx+1}/{len(keywords)})"):
-                        # 짝수 번째 키워드 전에 추가 정리 작업
-                        if global_idx % 2 == 1:  # 0-기반 인덱스에서 1은 두 번째(짝수) 키워드
+                        # 짝수 번째 키워드 처리 최적화
+                        if global_idx % 2 == 1:  # 짝수 번째 (0-인덱스 기준)
                             gc.collect()
-                            time.sleep(1)  # 짝수 번째 키워드 전에 추가 대기
+                            time.sleep(2)  # 짝수 키워드 전 추가 대기
                         
                         # 검색 실행
                         rank, success = search_keyword(driver, keyword, gig_id)
@@ -345,40 +347,38 @@ if st.button("키워드 순위 분석 시작"):
                         results_by_service[name][keyword] = rank
                         results.append(f"- {'✅' if '위' in rank else '❌'} **{keyword}**: {rank}")
                         
-                        # 드라이버 초기화가 필요한 경우
+                        # 검색 실패 시 드라이버 재시작
                         if not success:
                             try:
                                 driver.quit()
                             except:
                                 pass
                             driver = get_driver()
-                            time.sleep(2)
+                            time.sleep(3)
                         
-                        # 짝수 번째 키워드 후에 추가 정리 및 대기
-                        if global_idx % 2 == 1:  # 짝수 번째 키워드 후
+                        # 짝수 번째 키워드 후 추가 정리
+                        if global_idx % 2 == 1:
                             gc.collect()
-                            time.sleep(2)  # 추가 대기
+                            time.sleep(3)  # 짝수 키워드 후 추가 대기
                         
-                        # Update progress bar
+                        # 진행 상황 업데이트
                         progress_bar.progress((global_idx + 1) / len(keywords))
-                        
-                        # Update results display
                         results_placeholder.markdown("\n".join(results), unsafe_allow_html=True)
                 
                 # 배치 처리 후 추가 대기
-                time.sleep(3)
+                time.sleep(5)
                 gc.collect()
             
-            # Clear progress bar after completion
+            # 진행 표시줄 제거
             progress_bar.empty()
         
-        # Quit driver after all operations
+        # 모든 작업 후 드라이버 종료
         try:
             driver.quit()
         except:
             pass
             
-        # Show summary at the end
+        # 최종 결과 표시
         st.markdown("---")
         st.subheader("📊 검색 결과 순위 요약")
         
@@ -391,7 +391,7 @@ if st.button("키워드 순위 분석 시작"):
     
     except Exception as e:
         st.error(f"오류 발생: {str(e)}")
-        # Make sure to quit driver on error
+        # 오류 발생 시 드라이버 종료
         try:
             if 'driver' in locals():
                 driver.quit()
@@ -399,6 +399,5 @@ if st.button("키워드 순위 분석 시작"):
             pass
 else:
     st.info("👆 분석을 시작하려면 위 버튼을 클릭하세요.")
-
 st.markdown("---")
-st.markdown("#### 참고야옹")
+st.markdown("#### 야옹")
