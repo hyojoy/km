@@ -207,43 +207,60 @@ seo 최적화
         """
     },
 ]
-
 def get_driver():
+    """안정적인 크롬 드라이버 설정"""
     options = Options()
-    options.add_argument("--headless")
+    options.add_argument("--headless=new")  # 새로운 headless 모드
     options.add_argument("--disable-gpu")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     
-    # 중요: 고유한 user-data-dir 설정으로 충돌 방지
+    # 메모리 사용량 제한 옵션
+    options.add_argument("--disable-features=site-per-process")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-component-extensions-with-background-pages")
+    options.add_argument("--disable-default-apps")
+    options.add_argument("--blink-settings=imagesEnabled=false")  # 이미지 로딩 비활성화
+    
+    # 고유한 프로필 디렉토리 설정 (핵심 해결책)
     import uuid
     unique_dir = f"/tmp/chrome-data-{uuid.uuid4()}"
     options.add_argument(f"--user-data-dir={unique_dir}")
     
-    # 성능 최적화 옵션
-    options.add_argument("--window-size=1280x1024")
-    options.add_argument("--ignore-certificate-errors")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-notifications")
-    options.add_argument("--js-flags=--max-old-space-size=96")
+    # 메모리 최적화
+    options.add_argument("--window-size=800x600")
+    options.add_argument("--js-flags=--max-old-space-size=64")
+    options.add_argument("--renderer-process-limit=1")
     options.add_argument("--single-process")
     
-    # 안정성 향상을 위한 User-Agent 설정
-    options.add_argument("--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
+    # User-Agent
+    options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/114.0.0.0 Safari/537.36")
     
-    # ChromeDriver 설정
-    service = Service(executable_path="/usr/bin/chromedriver")
-    driver = webdriver.Chrome(service=service, options=options)
-    
-    # 타임아웃 설정
-    driver.set_page_load_timeout(30)
-    driver.set_script_timeout(30)
-    
-    return driver
+    try:
+        service = Service(executable_path="/usr/bin/chromedriver")
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.set_page_load_timeout(15)
+        driver.set_script_timeout(10)
+        return driver
+    except Exception as e:
+        time.sleep(2)
+        # 오류 발생 시 다시 시도
+        service = Service(executable_path="/usr/bin/chromedriver")
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.set_page_load_timeout(15)
+        driver.set_script_timeout(10)
+        return driver
 
+def is_driver_alive(driver):
+    """드라이버가 살아있는지 확인"""
+    try:
+        driver.execute_script("return navigator.userAgent")
+        return True
+    except:
+        return False
 
 def quit_driver(driver):
-    """드라이버를 안전하게 종료하고 크롬 프로세스 정리"""
+    """드라이버를 안전하게 종료"""
     try:
         driver.quit()
     except:
@@ -260,7 +277,6 @@ def quit_driver(driver):
     # 메모리 정리
     import gc
     gc.collect()
-
 
 # 다양한 선택자와 방법으로 요소 찾기를 시도하는 함수
 def find_service_rank(driver, gig_id):
@@ -308,79 +324,51 @@ def find_service_rank(driver, gig_id):
     
     return "❌ 없음", False
 
-# 향상된 키워드 검색 함수
-def search_keyword(driver, keyword, gig_id, max_retries=5):  # 재시도 횟수 증가
+def search_keyword(driver, keyword, gig_id, max_retries=2):
+    """키워드 검색 및 서비스 순위 확인"""
     for attempt in range(max_retries):
         try:
-            # 메모리 정리
-            if attempt > 0:  # 첫 시도가 아닌 경우
-                gc.collect()
+            # 드라이버 상태 확인
+            if not is_driver_alive(driver):
+                quit_driver(driver)
+                driver = get_driver()
+                time.sleep(2)
             
-            # URL 인코딩 및 검색 URL 생성
+            # 메모리 정리
+            gc.collect()
+            
+            # 검색 URL 생성 및 접속
             encoded = urllib.parse.quote(keyword)
             url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
-            
-            # 페이지 로드
             driver.get(url)
             
-            # 페이지 완전 로드 확인을 위한 여러 단계
-            try:
-                # 1. 첫 번째 접근: WebDriverWait로 DOM 요소 대기
-                WebDriverWait(driver, 10).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, 'article a[href^="/gig/"]'))
-                )
-            except TimeoutException:
-                # 2. 첫 번째 방법 실패 시: 페이지 로드 상태 확인
-                try:
-                    state = driver.execute_script("return document.readyState")
-                    if state != "complete":
-                        # 페이지가 완전히 로드되지 않았으면 추가 대기
-                        time.sleep(10)
-                except:
-                    # 3. 스크립트 실행 실패 시 단순 대기
-                    time.sleep(15)
+            # 간단한 대기 (복잡한 WebDriverWait 대신)
+            time.sleep(3)
             
-            # 페이지 스크롤 시도
+            # 서비스 순위 확인
             try:
-                # 페이지를 아래로 스크롤하여 더 많은 콘텐츠 로드
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight / 2);")
-                time.sleep(1)
-                driver.execute_script("window.scrollTo(0, 0);")  # 다시 위로 스크롤
-                time.sleep(1)
+                rank, found = find_service_rank(driver, gig_id)
             except:
-                pass  # 스크롤 실패 시 무시하고 계속 진행
+                # 선택자로 찾지 못하면 페이지 소스에서 검색
+                if gig_id in driver.page_source:
+                    rank = "페이지에 존재하나 위치 확인 불가"
+                    found = True
+                else:
+                    rank = "❌ 없음"
+                    found = False
             
-            # 서비스 랭킹 확인 함수 호출
-            rank, found = find_service_rank(driver, gig_id)
-            
-            # 서비스를 찾았거나 최대 시도 횟수에 도달한 경우
-            if found or attempt == max_retries - 1:
-                return rank, found
-            
-            # 이 시점에 도달했다는 것은 재시도가 필요하다는 의미
-            time.sleep(3 + attempt * 2)  # 시도 횟수에 따라 대기 시간 증가
+            return rank, found
             
         except Exception as e:
-            # 오류 발생 시 처리
             if attempt < max_retries - 1:
-                # 브라우저 상태 확인
-                try:
-                    driver.execute_script("return window.navigator.userAgent")
-                except:
-                    # 브라우저 재시작 필요
-                    try:
-                        driver.quit()
-                    except:
-                        pass
-                    driver = get_driver()
-                
-                # 재시도 전 대기
-                time.sleep(5 + attempt * 3)
+                # 실패 시 드라이버 재시작
+                quit_driver(driver)
+                driver = get_driver()
+                time.sleep(3)
             else:
-                return f"❌ 오류 발생", False
+                return f"❌ 오류: {str(e)[:30]}...", False
     
     return "❌ 최대 재시도 횟수 초과", False
-
 # 키워드 처리 함수 수정
 def process_keywords(driver, keywords, gig_id, results_placeholder, progress_bar, total_keywords):
     results = []
@@ -420,93 +408,64 @@ def process_keywords(driver, keywords, gig_id, results_placeholder, progress_bar
 # 메인 UI 및 실행 코드
 if st.button("키워드 순위 분석 시작"):
     try:
-        # 초기 드라이버 설정
-        driver = get_driver()
-        
-        # 전체 키워드 개수 계산 (진행률 계산용)
+        # 서비스 및 키워드 데이터 준비
         total_keywords = sum(len(re.findall(r'(.+?)\n[\d,]+원', service["raw_input"].strip())) for service in services)
-        
-        # 결과 저장용 딕셔너리
         results_by_service = {}
-        
-        # 전체 진행 표시줄
         total_progress = st.progress(0)
-        
-        # 현재까지 처리된 키워드 수
         processed_keywords = 0
         
-        # 모든 서비스 처리
+        # 각 서비스별 처리
         for service_idx, service in enumerate(services):
             name = service["name"]
             gig_id = service["id"]
-            raw_input = service["raw_input"]
-            
-            # 키워드 추출
-            keywords = re.findall(r'(.+?)\n[\d,]+원', raw_input.strip())
+            keywords = re.findall(r'(.+?)\n[\d,]+원', service["raw_input"].strip())
             keywords = [kw.strip() for kw in keywords]
             
             st.subheader(f"📦 서비스: {name} ({len(keywords)} 키워드)")
-            
-            # 서비스별 진행 표시줄
             service_progress = st.progress(0)
-            
-            # 결과 표시용 placeholder
             results_placeholder = st.empty()
-            
-            # 키워드 배치 처리
-            batch_size = 2  # 배치 크기 더 줄임 (더 자주 드라이버 재시작)
             results_by_service[name] = {}
             
-            for batch_start in range(0, len(keywords), batch_size):
-                # 배치 범위 설정
-                batch_end = min(batch_start + batch_size, len(keywords))
-                batch_keywords = keywords[batch_start:batch_end]
+            # 키워드 한 개씩 처리 (배치 처리 대신)
+            for idx, keyword in enumerate(keywords):
+                # 매 키워드마다 새 드라이버 생성
+                driver = get_driver()
+                time.sleep(1)
                 
-                # 배치마다 드라이버 재시작 (첫 배치 제외)
-                if batch_start > 0:
-                    try:
-                        driver.quit()
-                    except:
-                        pass
-                    driver = get_driver()
-                    time.sleep(3)  # 드라이버 초기화 후 대기
+                with st.spinner(f"검색 중: {keyword} ({idx+1}/{len(keywords)})"):
+                    # 검색 실행
+                    rank, success = search_keyword(driver, keyword, gig_id, max_retries=2)
+                    
+                    # 결과 저장
+                    results_by_service[name][keyword] = rank
+                    
+                    # 진행 상황 업데이트
+                    progress_percentage = (idx + 1) / len(keywords)
+                    service_progress.progress(min(progress_percentage, 1.0))
+                    
+                    # 결과 표시
+                    current_results = []
+                    for k_idx, k in enumerate(keywords[:idx+1]):
+                        result = results_by_service[name].get(k, "대기 중...")
+                        current_results.append(f"- {'✅' if '위' in result else '❌'} **{k}**: {result}")
+                    
+                    results_placeholder.markdown("\n".join(current_results), unsafe_allow_html=True)
                 
-                batch_results, _, driver = process_keywords(
-                    driver, 
-                    batch_keywords, 
-                    gig_id, 
-                    results_placeholder, 
-                    service_progress,
-                    len(keywords)
-                )
-                
-                # 결과 통합
-                results_by_service[name].update(batch_results)
-                
-                # 배치 간 휴식
-                gc.collect()
-                time.sleep(5)
+                # 드라이버 즉시 종료 (중요!)
+                quit_driver(driver)
                 
                 # 전체 진행 상황 업데이트
-                processed_keywords += len(batch_keywords)
+                processed_keywords += 1
                 total_progress.progress(min(processed_keywords / total_keywords, 1.0))
+                
+                # 처리 간격
+                time.sleep(2)
             
-            # 서비스 진행 표시줄 완료 처리
+            # 서비스 진행 표시줄 완료
             service_progress.progress(1.0)
-            
-            # 서비스 간 간격
             st.markdown("---")
         
-        # 모든 작업 후 드라이버 종료
-        try:
-            driver.quit()
-        except:
-            pass
-            
-        # 전체 진행 표시줄 완료 처리
-        total_progress.progress(1.0)
-            
-        # 최종 결과 표시
+        # 모든 작업 완료 후 결과 표시
         st.subheader("📊 검색 결과 순위 요약")
         
         for service_name, keywords in results_by_service.items():
@@ -537,15 +496,14 @@ if st.button("키워드 순위 분석 시작"):
         st.success("✅ 모든 키워드 분석이 완료되었습니다!")
     
     except Exception as e:
-        st.error(f"오류 발생: {str(e)}")
-        # 오류 발생 시 드라이버 종료
+        st.error(f"전체 처리 오류: {str(e)}")
+        # 오류 발생 시 남은 드라이버 정리
+        import os
         try:
-            if 'driver' in locals():
-                driver.quit()
+            os.system("pkill -f chrome")
+            os.system("pkill -f chromedriver")
         except:
             pass
-else:
-    st.info("👆 분석을 시작하려면 위 버튼을 클릭하세요.")
 
 st.markdown("---")
 st.markdown("#### 참고사항")
