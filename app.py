@@ -208,15 +208,8 @@ seo 최적화
     },
 ]
 def get_driver():
-    """안정적인 크롬 드라이버 설정 - 스레드 제한 문제 해결"""
-    # 먼저 기존 프로세스 정리 시도
-    clean_processes()
-    
-    # 시스템 자원 확보를 위한 대기
-    time.sleep(2)
-    
+    """안정적인 크롬 드라이버 설정"""
     # 메모리 확보를 위한 가비지 컬렉션 강제 실행
-    import gc
     gc.collect()
     
     options = Options()
@@ -225,72 +218,56 @@ def get_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
     
-    # 최소한의 리소스만 사용하도록 설정
-    options.add_argument("--disable-extensions")
-    options.add_argument("--blink-settings=imagesEnabled=false")
-    options.add_argument("--window-size=800x600")  # 더 작은 크기로 설정
+    # 단일 프로세스 모드 대신 일반 모드로 변경
+    # options.add_argument("--single-process") # 이 줄 삭제 또는 주석 처리
     
-    # 중요: 단일 프로세스 모드로 실행
-    options.add_argument("--single-process")
-    
-    # 기본 User-Agent 사용
-    options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) Chrome/136.0.0.0")
+    # 추가: 크롬 안정성 향상을 위한 옵션
+    options.add_argument("--disable-features=NetworkService")
+    options.add_argument("--disable-infobars")
+    options.add_argument("--disable-notifications")
+    options.add_argument("--remote-debugging-port=9222") # 디버깅 포트 활성화
     
     try:
         service = Service(executable_path="/usr/bin/chromedriver")
         driver = webdriver.Chrome(service=service, options=options)
-        driver.set_page_load_timeout(12)  # 타임아웃 적당히 설정
+        driver.set_page_load_timeout(15)  # 타임아웃 시간 증가
         return driver
     except Exception as e:
         st.warning(f"드라이버 생성 실패: {str(e)}")
         
-        # 더 공격적으로 정리
+        # 정리 후 두 번째 시도
         clean_processes()
         time.sleep(3)
         
-        # 두 번째 시도 (더 단순한 옵션)
         try:
             options = Options()
             options.add_argument("--headless=new")
             options.add_argument("--disable-gpu")
             options.add_argument("--no-sandbox")
-            options.add_argument("--single-process")
             service = Service(executable_path="/usr/bin/chromedriver")
             driver = webdriver.Chrome(service=service, options=options)
             return driver
         except Exception as e2:
-            # 치명적 오류 - 메모리 정리 후 잠시 대기
             st.error(f"드라이버 생성 완전 실패: {str(e2)}")
-            clean_processes()
-            time.sleep(5)  # 더 긴 대기 시간
-            gc.collect()
-            
-            # 마지막 시도 - 최소한의 옵션
-            options = Options()
-            options.add_argument("--headless")
-            service = Service(executable_path="/usr/bin/chromedriver")
-            return webdriver.Chrome(service=service, options=options)
+            raise
 
 def clean_processes():
     """더 강력한 프로세스 정리"""
     import os, signal, subprocess
     
     try:
-        # 좀비 프로세스 정리
+        # 좀비 프로세스 정리 (SIGTERM으로 먼저 시도하고 SIGKILL)
+        os.system("pkill -f chrome")
+        os.system("pkill -f chromedriver")
+        
+        # 강제 종료 전 잠시 대기
+        time.sleep(1)
+        
+        # 그래도 남아있는 프로세스 강제 종료
         os.system("pkill -9 -f chrome")
         os.system("pkill -9 -f chromedriver")
         
-        # 특정 프로세스 확인 및 강제 종료
-        try:
-            chrome_pids = subprocess.check_output("pgrep -f chrome", shell=True).decode().strip().split('\n')
-            for pid in chrome_pids:
-                if pid.strip():
-                    os.kill(int(pid), signal.SIGKILL)
-        except:
-            pass
-            
         # 메모리 정리
-        import gc
         gc.collect()
     except:
         pass
@@ -309,23 +286,15 @@ def is_driver_alive(driver):
 def quit_driver(driver):
     """드라이버를 안전하게 종료하고 리소스 정리"""
     try:
-        if driver and is_driver_alive(driver):
-            # 열린 페이지 정리 시도
-            driver.execute_script("window.open('about:blank', '_self').close();")
+        if driver:
+            driver.execute_script("window.stop();")  # 페이지 로딩 중지
             time.sleep(0.5)
             driver.quit()
     except Exception as e:
         pass
     finally:
         # 남은 프로세스 정리
-        import os, gc
-        try:
-            # 특정 시점마다 크롬 프로세스 정리
-            os.system("pkill -f chrome")
-            os.system("pkill -f chromedriver")
-        except:
-            pass
-        
+        clean_processes()
         # 메모리 정리
         gc.collect()
 
@@ -478,33 +447,36 @@ def process_keywords(driver, keywords, gig_id, results_placeholder, progress_bar
     keyword_results = {}
     
     for idx, keyword in enumerate(keywords):
-        # 2개 키워드마다 드라이버 재시작
-        if idx > 0 and idx % 2 == 0:
+        # 매 키워드마다 드라이버 재시작 (더 안정적인 접근)
+        if idx > 0:
             quit_driver(driver)
             driver = get_driver()
             time.sleep(2)
         
         with st.spinner(f"검색 중: {keyword} ({idx+1}/{len(keywords)})"):
             # 검색 실행
-            rank, success = search_keyword(driver, keyword, gig_id, max_retries=3)
-            
-            # 결과 저장 및 표시
-            keyword_results[keyword] = rank
-            results.append(f"- {'✅' if '위' in rank else '❌'} **{keyword}**: {rank}")
-            
-            # 오류 발생 시 드라이버 재시작
-            if not success:
+            try:
+                rank, success = search_keyword(driver, keyword, gig_id, max_retries=2)
+            except Exception as e:
+                # 오류 발생 시 
+                st.warning(f"키워드 '{keyword}' 검색 중 오류: {str(e)[:50]}...")
                 quit_driver(driver)
                 driver = get_driver()
                 time.sleep(2)
+                # 재시도
+                rank, success = search_keyword(driver, keyword, gig_id, max_retries=2)
+            
+            # 결과 저장 및 표시
+            keyword_results[keyword] = rank
+            results.append(format_rank_result(keyword, rank))
             
             # 진행 상황 업데이트
             progress_percentage = (idx + 1) / len(keywords)
             progress_bar.progress(min(progress_percentage, 1.0))
             results_placeholder.markdown("\n".join(results), unsafe_allow_html=True)
             
-            # 처리 간격
-            time.sleep(1)
+            # 처리 간격 - 충분한 시간 설정
+            time.sleep(2)
     
     return keyword_results, results, driver
 
@@ -512,13 +484,12 @@ if st.button("키워드 순위 분석 시작"):
     # 시작 전 철저한 시스템 정리
     st.info("시스템 리소스 정리 중...")
     clean_processes()
-    import gc
     gc.collect()
-    time.sleep(3)  # 충분한 대기시간
+    time.sleep(3)
     
     try:
         # 한 번에 처리할 키워드 수 제한
-        MAX_KEYWORDS_PER_BATCH = 5  # 한 번에 5개씩만 처리
+        MAX_KEYWORDS_PER_BATCH = 3  # 더 작은 배치 크기로 변경
         
         # 서비스 및 키워드 데이터 준비
         total_keywords = sum(len(re.findall(r'(.+?)\n[\d,]+원', service["raw_input"].strip())) for service in services)
@@ -526,7 +497,6 @@ if st.button("키워드 순위 분석 시작"):
         total_progress = st.progress(0)
         processed_keywords = 0
         
-        # 각 서비스별 처리
         for service_idx, service in enumerate(services):
             name = service["name"]
             gig_id = service["id"]
