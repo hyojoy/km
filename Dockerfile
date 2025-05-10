@@ -12,7 +12,6 @@ RUN apt-get update && apt-get install -y \
     libfontconfig1 \
     libxss1 \
     libappindicator1 \
-    libindicator7 \
     fonts-liberation \
     libatk-bridge2.0-0 \
     libgtk-3-0 \
