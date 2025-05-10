@@ -325,26 +325,49 @@ def find_service_rank(driver, gig_id):
         try:
             elements = method()
             if elements:  # 요소를 찾았다면
-                # 결과 확인
-                for i, element in enumerate(elements[:15]):  # 상위 15개까지 확인
+                # 상위 5개까지만 확인 (중요한 최적화)
+                for i, element in enumerate(elements[:5]):  # 5개까지만 확인
                     try:
                         href = element.get_attribute('href')
                         if gig_id in href:
+                            if i+1 == 5:  # 정확히 5위인 경우 특별 표시
+                                return f"{i+1}위 (경계)", True
                             return f"{i+1}위", True
-                    except StaleElementReferenceException:
+                    except:
                         continue  # 요소가 stale 상태면 다음으로 넘어감
+                
+                # 상위 5개 안에 없으면 "5위 밖" 표시
+                return "5위 밖", False
         except Exception:
             continue  # 오류 발생 시 다음 방법 시도
-    
+
     # 모든 방법을 시도했지만 찾지 못한 경우
     # 페이지 소스에서 직접 검색
     if gig_id in driver.page_source:
-        return "페이지에 존재하나 선택자로 찾지 못함", True
-    
+        return "페이지에 존재하나 5위 밖", False
+
     return "❌ 없음", False
 
+def format_rank_result(keyword, rank):
+    """순위 결과를 색상으로 표시 (5위 기준)"""
+    if "위" in rank:
+        # 순위 확인
+        if "5위 밖" in rank:
+            # 5위 밖은 회색
+            return f"- ⚠️ **{keyword}**: <span style='color:gray;'>{rank}</span>"
+        elif "5위 (경계)" in rank:
+            # 정확히 5위는 노란색
+            return f"- ✅ **{keyword}**: <span style='color:orange; font-weight:bold;'>{rank}</span>"
+        else:
+            # 1-4위는 초록색
+            return f"- ✅ **{keyword}**: <span style='color:green; font-weight:bold;'>{rank}</span>"
+    else:
+        # 순위가 없으면 빨간색
+        return f"- ❌ **{keyword}**: <span style='color:red;'>{rank}</span>"
+
+
 def search_keyword(driver, keyword, gig_id, max_retries=3):
-    """키워드 검색 및 서비스 순위 확인 - 안정성 개선"""
+    """키워드 검색 및 서비스 순위 확인 - 5위 이내만 확인하도록 최적화"""
     for attempt in range(max_retries):
         try:
             # 드라이버 상태 확인
@@ -353,9 +376,6 @@ def search_keyword(driver, keyword, gig_id, max_retries=3):
                 driver = get_driver()
                 time.sleep(2)
             
-            # 메모리 정리
-            gc.collect()
-            
             # 검색 URL 생성 및 접속
             encoded = urllib.parse.quote(keyword)
             url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
@@ -363,21 +383,21 @@ def search_keyword(driver, keyword, gig_id, max_retries=3):
             # 페이지 로드 시도
             driver.get(url)
             
-            # 페이지 로딩 대기 시간 증가
-            time.sleep(5)  # 더 긴 대기 시간
+            # 페이지 로딩 대기 (최소화)
+            time.sleep(3)  # 첫 5개 결과만 필요하므로 대기 시간 단축
             
-            # 서비스 순위 확인
+            # 상위 결과만 확인하기 위한 최소한의 스크롤
             try:
-                # 스크롤 다운 추가 - 더 많은 결과 로드
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
-                time.sleep(1)
+                # 상위 결과 영역만 표시되도록 약간만 스크롤
+                driver.execute_script("window.scrollTo(0, 300);")
+                time.sleep(0.5)
                 
                 rank, found = find_service_rank(driver, gig_id)
             except Exception as rank_error:
                 # 선택자로 찾지 못하면 페이지 소스에서 검색
                 if gig_id in driver.page_source:
-                    rank = "페이지에 존재하나 위치 확인 불가"
-                    found = True
+                    rank = "페이지에 존재하나 5위 밖"
+                    found = False
                 else:
                     rank = "❌ 없음"
                     found = False
@@ -541,25 +561,43 @@ if st.button("키워드 순위 분석 시작"):
         for service_name, keywords in results_by_service.items():
             st.markdown(f"**🔹 서비스: {service_name}**")
             
-            # 결과를 성공(순위 있음)과 실패(없음)로 분류
-            success_keywords = {k: v for k, v in keywords.items() if "위" in v}
-            failed_keywords = {k: v for k, v in keywords.items() if "위" not in v}
+            # 결과를 카테고리로 분류
+            top5_keywords = {}
+            outside5_keywords = {}
+            not_found_keywords = {}
             
-            # 성공한 키워드 먼저 표시
-            if success_keywords:
-                st.markdown("✅ **찾은 키워드:**")
-                for keyword, rank in success_keywords.items():
-                    st.markdown(f"  - {keyword}: {rank}")
+            for kw, rank in keywords.items():
+                if "위" in rank and "5위 밖" not in rank and "페이지에 존재" not in rank:
+                    # 5위 이내
+                    top5_keywords[kw] = rank
+                elif "5위 밖" in rank or "페이지에 존재" in rank:
+                    # 5위 밖
+                    outside5_keywords[kw] = rank
+                else:
+                    # 찾지 못함
+                    not_found_keywords[kw] = rank
             
-            # 실패한 키워드 표시
-            if failed_keywords:
+            # 5위 이내 키워드 표시
+            if top5_keywords:
+                st.markdown("✅ **5위 이내 키워드:**")
+                for keyword, rank in top5_keywords.items():
+                    if "5위 (경계)" in rank:
+                        st.markdown(f"  - {keyword}: <span style='color:orange; font-weight:bold;'>{rank}</span>", unsafe_allow_html=True)
+                    else:
+                        st.markdown(f"  - {keyword}: <span style='color:green; font-weight:bold;'>{rank}</span>", unsafe_allow_html=True)
+            
+            # 5위 밖 키워드 표시
+            if outside5_keywords:
+                st.markdown("⚠️ **5위 밖 키워드:**")
+                for keyword, rank in outside5_keywords.items():
+                    st.markdown(f"  - {keyword}: <span style='color:gray;'>{rank}</span>", unsafe_allow_html=True)
+            
+            # 찾지 못한 키워드 표시
+            if not_found_keywords:
                 st.markdown("❌ **찾지 못한 키워드:**")
-                for keyword, rank in failed_keywords.items():
-                    st.markdown(f"  - {keyword}: {rank}")
-            
-            # 성공률 계산
-            success_rate = len(success_keywords) / len(keywords) * 100 if keywords else 0
-            st.markdown(f"**성공률: {success_rate:.1f}%** ({len(success_keywords)}/{len(keywords)})")
+                for keyword, rank in not_found_keywords.items():
+                    st.markdown(f"  - {keyword}: <span style='color:red;'>{rank}</span>", unsafe_allow_html=True)
+
             
             st.markdown("---")
                 
