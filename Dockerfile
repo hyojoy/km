@@ -1,6 +1,6 @@
 FROM python:3.10-slim
 
-# 시스템 필수 패키지 설치 + Chrome 의존성 명시
+# Install system dependencies and Chrome dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     wget \
     curl \
@@ -28,24 +28,44 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxshmfence1 \
     && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Chrome 설치
+# Install Chrome
 RUN wget -q https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb -O /tmp/chrome.deb && \
     apt-get update && apt-get install -y /tmp/chrome.deb && \
-    rm /tmp/chrome.deb
+    rm /tmp/chrome.deb && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# ChromeDriver v136 수동 설치
+# Verify Chrome installation and get version
+RUN google-chrome --version
+
+# Install ChromeDriver that matches Chrome's version
 RUN wget -q -O /tmp/chromedriver.zip https://edgedl.me.gvt1.com/edgedl/chrome/chrome-for-testing/136.0.7103.92/linux64/chromedriver-linux64.zip && \
     unzip -o /tmp/chromedriver.zip -d /tmp/ && \
     mv /tmp/chromedriver-linux64/chromedriver /usr/bin/chromedriver && \
     chmod +x /usr/bin/chromedriver && \
+    rm -rf /tmp/chromedriver* && \
     chromedriver --version
 
-# 파이썬 패키지 설치
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Set working directory
+WORKDIR /app
 
-# 앱 복사
+# Copy requirements first (for better caching)
+COPY requirements.txt .
+
+# Install pip requirements
+RUN pip install --no-cache-dir -r requirements.txt 
+
+# Copy application code
 COPY app.py .
 
-# 앱 실행
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0"]
+# Expose port
+EXPOSE 8501
+
+# Health check
+HEALTHCHECK CMD curl --fail http://localhost:8501/_stcore/health || exit 1
+
+# Set environment variables
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONDONTWRITEBYTECODE=1
+
+# Run the application with reasonable timeouts
+CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.maxUploadSize=10"]
