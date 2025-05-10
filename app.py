@@ -1,5 +1,6 @@
 import re
 import time
+import gc
 import urllib.parse
 import streamlit as st
 from selenium import webdriver
@@ -214,10 +215,73 @@ def get_driver():
     options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--window-size=1200x800")
     
+    # 메모리 사용 최적화 옵션 추가
+    options.add_argument("--disable-extensions")
+    options.add_argument("--disable-infobars")
+    options.add_argument("--disable-browser-side-navigation")
+    options.add_argument("--disable-features=TranslateUI")
+    options.add_argument("--disable-features=site-per-process")
+    options.add_argument("--disable-breakpad")
+    options.add_argument("--disable-logging")
+    options.add_argument("--disable-default-apps")
+    options.add_argument("--incognito")
+    options.add_argument("--disable-dev-tools")
+    options.add_argument("--disable-browser-side-navigation")
+    
+    # Railway 환경에 최적화된 메모리 제한 설정
+    options.add_argument("--js-flags=--max-old-space-size=128")
+    
     # Use pre-installed ChromeDriver from Dockerfile
     service = Service(executable_path="/usr/bin/chromedriver")
     driver = webdriver.Chrome(service=service, options=options)
     return driver
+
+# 검색 함수를 별도로 분리하고 재시도 로직 추가
+def search_keyword(driver, keyword, gig_id, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            # 메모리 정리 먼저 실행
+            gc.collect()
+            
+            encoded = urllib.parse.quote(keyword)
+            url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
+            
+            # 페이지 로드
+            driver.get(url)
+            
+            # 짝수 번째 키워드는 대기 시간을 약간 늘림
+            wait_time = 7 if keyword == keyword.strip() and len(keyword) % 2 == 0 else 5
+            time.sleep(wait_time)
+            
+            # 페이지 로드 완료 확인
+            articles = driver.find_elements(By.CSS_SELECTOR, 'article.css-790i1i a[href^="/gig/"]')
+            
+            # 결과 확인
+            for i, article in enumerate(articles[:5]):
+                href = article.get_attribute('href')
+                if gig_id in href:
+                    return f"{i+1}위", True
+            
+            return "❌ 없음", True
+            
+        except Exception as e:
+            if attempt < max_retries - 1:
+                # 짧은 대기 후 재시도
+                time.sleep(3)
+                try:
+                    # 브라우저 상태 확인 및 재설정
+                    driver.execute_script("return document.readyState")
+                except:
+                    # 브라우저 재시작
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+                    driver = get_driver()
+            else:
+                return f"❌ 오류 발생 ({str(e)[:50]}...)", False
+    
+    return "❌ 최대 재시도 횟수 초과", False
 
 # Start analysis when user clicks the button
 if st.button("키워드 순위 분석 시작"):
@@ -248,56 +312,62 @@ if st.button("키워드 순위 분석 시작"):
             results = []
             results_by_service[name] = {}
             
-            # Process keywords
-            for idx, keyword in enumerate(keywords):
-                try:
-                    with st.spinner(f"검색 중: {keyword}"):
-                        encoded = urllib.parse.quote(keyword)
-                        url = f"https://kmong.com/search?type=gigs&keyword={encoded}"
+            # Process keywords with batch processing
+            batch_size = 5  # 한 번에 처리할 키워드 수
+            for batch_start in range(0, len(keywords), batch_size):
+                batch_end = min(batch_start + batch_size, len(keywords))
+                batch_keywords = keywords[batch_start:batch_end]
+                
+                # 배치 처리 전 드라이버 재시작 (메모리 확보)
+                if batch_start > 0:
+                    try:
+                        driver.quit()
+                    except:
+                        pass
+                    driver = get_driver()
+                    # 드라이버 초기화 후 짧은 대기
+                    time.sleep(2)
+                
+                # Process batch keywords
+                for idx, keyword in enumerate(batch_keywords):
+                    global_idx = batch_start + idx
+                    
+                    with st.spinner(f"검색 중: {keyword} ({global_idx+1}/{len(keywords)})"):
+                        # 짝수 번째 키워드 전에 추가 정리 작업
+                        if global_idx % 2 == 1:  # 0-기반 인덱스에서 1은 두 번째(짝수) 키워드
+                            gc.collect()
+                            time.sleep(1)  # 짝수 번째 키워드 전에 추가 대기
                         
-                        # Try to navigate to the URL
-                        driver.get(url)
-                        time.sleep(5)  # Wait for page to load, same as original code
+                        # 검색 실행
+                        rank, success = search_keyword(driver, keyword, gig_id)
                         
-                        # Use the same CSS selector as in the original code
-                        articles = driver.find_elements(By.CSS_SELECTOR, 'article.css-790i1i a[href^="/gig/"]')
+                        # 결과 저장
+                        results_by_service[name][keyword] = rank
+                        results.append(f"- {'✅' if '위' in rank else '❌'} **{keyword}**: {rank}")
                         
-                        found = False
-                        for i, article in enumerate(articles[:5]):  # Only check first 5 results
-                            href = article.get_attribute('href')
-                            if gig_id in href:
-                                rank = f"{i+1}위"
-                                results_by_service[name][keyword] = rank
-                                results.append(f"- ✅ **{keyword}**: {rank}")
-                                found = True
-                                break
-                                
-                        if not found:
-                            results_by_service[name][keyword] = "❌ 없음"
-                            results.append(f"- ❌ **{keyword}**: 검색결과 없음")
+                        # 드라이버 초기화가 필요한 경우
+                        if not success:
+                            try:
+                                driver.quit()
+                            except:
+                                pass
+                            driver = get_driver()
+                            time.sleep(2)
+                        
+                        # 짝수 번째 키워드 후에 추가 정리 및 대기
+                        if global_idx % 2 == 1:  # 짝수 번째 키워드 후
+                            gc.collect()
+                            time.sleep(2)  # 추가 대기
                         
                         # Update progress bar
-                        progress_bar.progress((idx + 1) / len(keywords))
+                        progress_bar.progress((global_idx + 1) / len(keywords))
                         
                         # Update results display
                         results_placeholder.markdown("\n".join(results), unsafe_allow_html=True)
-                        
-                except Exception as e:
-                    # If an error occurs with one keyword, log it and continue
-                    error_msg = f"- ❌ **{keyword}**: 오류 발생 ({str(e)[:100]}...)"
-                    results.append(error_msg)
-                    results_placeholder.markdown("\n".join(results), unsafe_allow_html=True)
-                    
-                    # If driver crashed, recreate it
-                    try:
-                        driver.title  # Test if driver is still responsive
-                    except:
-                        st.warning("브라우저가 응답하지 않아 재시작합니다...")
-                        try:
-                            driver.quit()
-                        except:
-                            pass
-                        driver = get_driver()
+                
+                # 배치 처리 후 추가 대기
+                time.sleep(3)
+                gc.collect()
             
             # Clear progress bar after completion
             progress_bar.empty()
@@ -331,6 +401,4 @@ else:
     st.info("👆 분석을 시작하려면 위 버튼을 클릭하세요.")
 
 st.markdown("---")
-st.markdown("#### 참고사항")
-st.markdown("- 검색 결과는 실시간으로 변동될 수 있습니다.")
-st.markdown("- 한 번에 너무 많은 키워드를 분석할 경우 시간이 오래 걸릴 수 있습니다.")
+st.markdown("#### 참고야옹")
